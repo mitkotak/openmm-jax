@@ -1,0 +1,15 @@
+#ifndef OPENMM_CUDA_JAX_KERNEL_SOURCES_H_
+#define OPENMM_CUDA_JAX_KERNEL_SOURCES_H_
+
+#include <string>
+
+namespace JaxPlugin {
+
+class CudaJaxKernelSources {
+public:
+    @CUDA_FILE_DECLARATIONS@
+};
+
+} // namespace JaxPlugin
+
+#endif

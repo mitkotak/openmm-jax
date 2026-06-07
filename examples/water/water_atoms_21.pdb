@@ -1,0 +1,27 @@
+REMARK    CONVERTED FROM EXTENDED XYZ
+CRYST1    6.223    6.223    6.223  90.00  90.00  90.00 P 1           1
+HETATM    1  O   HOH A   1       3.213  -2.120   1.251  1.00  0.00           O
+HETATM    2  H1  HOH A   1       3.849  -2.836   1.264  1.00  0.00           H
+HETATM    3  H2  HOH A   1       3.350  -1.694   0.405  1.00  0.00           H
+HETATM    4  O   HOH A   2       0.408  -2.224   1.214  1.00  0.00           O
+HETATM    5  H1  HOH A   2       1.331  -2.375   1.418  1.00  0.00           H
+HETATM    6  H2  HOH A   2       0.181  -1.433   1.702  1.00  0.00           H
+HETATM    7  O   HOH A   3       0.663   2.739  -1.214  1.00  0.00           O
+HETATM    8  H1  HOH A   3       0.899   3.596  -1.569  1.00  0.00           H
+HETATM    9  H2  HOH A   3       0.361   2.923  -0.324  1.00  0.00           H
+HETATM   10  O   HOH A   4      -3.127   0.187   2.675  1.00  0.00           O
+HETATM   11  H1  HOH A   4      -3.090  -0.632   2.181  1.00  0.00           H
+HETATM   12  H2  HOH A   4      -2.990  -0.075   3.586  1.00  0.00           H
+HETATM   13  O   HOH A   5      -2.681   0.236  -0.867  1.00  0.00           O
+HETATM   14  H1  HOH A   5      -2.566   1.081  -1.303  1.00  0.00           H
+HETATM   15  H2  HOH A   5      -3.629   0.104  -0.846  1.00  0.00           H
+HETATM   16  O   HOH A   6      -1.665   1.766   1.097  1.00  0.00           O
+HETATM   17  H1  HOH A   6      -1.774   1.151   0.371  1.00  0.00           H
+HETATM   18  H2  HOH A   6      -2.140   1.365   1.824  1.00  0.00           H
+HETATM   19  O   HOH A   7       0.362   0.277   2.300  1.00  0.00           O
+HETATM   20  H1  HOH A   7       1.290   0.507   2.351  1.00  0.00           H
+HETATM   21  H2  HOH A   7      -0.059   1.058   1.941  1.00  0.00           H
+HETATM   22  O   HOH A   8       0.901  -0.573  -1.258  1.00  0.00           O
+HETATM   23  H1  HOH A   8       0.566  -0.136  -2.041  1.00  0.00           H
+HETATM   24  H2  HOH A   8       0.128  -0.707  -0.709  1.00  0.00           H
+END

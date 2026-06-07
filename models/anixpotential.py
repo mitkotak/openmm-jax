@@ -1,0 +1,201 @@
+"""OpenMM integration for the bundled ANI2x-JAX model."""
+
+from __future__ import annotations
+
+from functools import partial
+from typing import Iterable, Optional
+
+import jax
+import jax.numpy as jnp
+import openmm
+import openmm.app as app
+from openmm import unit
+from .ani import (
+    HARTREE_TO_KJMOL,
+    allocate_neighbor_list,
+    fractional_coordinates,
+    get_neighbors,
+    load_ani2x_model,
+)
+
+from openmmml.mlpotential import MLPotential, MLPotentialImpl, MLPotentialImplFactory
+import openmmjax
+from openmmjax_export import (
+    configure_pjrt_plugin,
+    export_jax_model,
+)
+
+
+class ANI2xPotentialImplFactory(MLPotentialImplFactory):
+    def createImpl(self, name, modelPath=None, **_args):
+        return ANI2xPotentialImpl(name, modelPath=modelPath)
+
+
+class ANI2xPotentialImpl(MLPotentialImpl):
+    def __init__(self, _name, modelPath=None):
+        self.modelPath = modelPath
+
+    def addForces(
+        self,
+        topology: app.Topology,
+        system: openmm.System,
+        atoms: Optional[Iterable[int]],
+        forceGroup: int,
+        modelPath: Optional[str] = None,
+        neighbor_cell_atom_threshold: Optional[int] = None,
+        periodic_neighborlist: bool = True,
+        **_args,
+    ):
+        # Prepare inputs to the model
+
+        includedAtoms = list(topology.atoms())
+        if atoms is not None:
+            atoms = list(atoms)
+            includedAtoms = [includedAtoms[i] for i in atoms]
+        species = jnp.array(
+            [atom.element.atomic_number for atom in includedAtoms], dtype=jnp.int32
+        )
+        indices = None if atoms is None else jnp.array(atoms, dtype=jnp.int32)
+        numSystemAtoms = system.getNumParticles()
+
+        periodic = (
+            topology.getPeriodicBoxVectors() is not None
+            or system.usesPeriodicBoundaryConditions()
+        )
+        forcePeriodic = periodic and periodic_neighborlist
+        model_path = self.modelPath if modelPath is None else modelPath
+        model = load_ani2x_model(
+            model_path,
+            atomic_numbers=species,
+            neighbor_cell_atom_threshold=neighbor_cell_atom_threshold,
+        )
+        neighbor_cell_atom_threshold = int(model.neighbor_cell_atom_threshold)
+        model_species = jnp.asarray(model.species_to_index, dtype=jnp.int32)[species]
+        allocation_box = None
+        if forcePeriodic:
+            box_vectors = topology.getPeriodicBoxVectors()
+            if box_vectors is None:
+                box_vectors = system.getDefaultPeriodicBoxVectors()
+            allocation_box = jnp.asarray(
+                [vector.value_in_unit(unit.angstrom) for vector in box_vectors],
+                dtype=jnp.float32,
+            )
+        radial_neighbor_list = allocate_neighbor_list(
+            len(includedAtoms),
+            allocation_box,
+            cell_atom_threshold=neighbor_cell_atom_threshold,
+            cutoff=float(model.radial_cutoff),
+            cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
+            periodic=forcePeriodic,
+        )
+        angular_neighbor_list = allocate_neighbor_list(
+            len(includedAtoms),
+            allocation_box,
+            cell_atom_threshold=neighbor_cell_atom_threshold,
+            cutoff=float(model.angular_cutoff),
+            cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
+            periodic=forcePeriodic,
+        )
+        energy_fn = partial(
+            _energyANI,
+            model=model,
+            species=model_species,
+            pbc=forcePeriodic,
+            radial_neighbor_list=radial_neighbor_list,
+            angular_neighbor_list=angular_neighbor_list,
+        )
+
+        def _energy_kjmol(positions_nm, box_vectors_nm=None):
+            selected_positions = (
+                positions_nm if indices is None else positions_nm[indices]
+            )
+            return energy_fn((selected_positions, box_vectors_nm))
+
+        def _energy_and_forces_kjmol(positions_nm, box_vectors_nm=None):
+            energy, minus_forces = jax.value_and_grad(_energy_kjmol)(
+                positions_nm, box_vectors_nm
+            )
+            return energy, -minus_forces
+
+        def _forces_kjmol(positions_nm, box_vectors_nm=None):
+            _energy, forces = _energy_and_forces_kjmol(positions_nm, box_vectors_nm)
+            return forces
+
+        force_mlir, energy_mlir, energy_and_forces_mlir, compile_options_base64 = (
+            export_jax_model(
+                num_system_atoms=numSystemAtoms,
+                force_function=_forces_kjmol,
+                energy_function=_energy_kjmol,
+                energy_and_forces_function=_energy_and_forces_kjmol,
+                periodic=forcePeriodic,
+            )
+        )
+        force = openmmjax.JaxForce(
+            force_mlir,
+            energy_mlir,
+            energy_and_forces_mlir,
+            compile_options_base64,
+        )
+        configure_pjrt_plugin(force)
+        force.setForceGroup(forceGroup)
+        force.setUsesPeriodicBoundaryConditions(forcePeriodic)
+        force.setOutputsForces(True)
+        force.addToSystem(system)
+
+
+MLPotential.registerImplFactory("ani2x-jax", ANI2xPotentialImplFactory())
+
+__all__ = [
+    "MLPotential",
+    "ANI2xPotentialImplFactory",
+    "ANI2xPotentialImpl",
+]
+
+
+def _energyANI(
+    state,
+    model,
+    species,
+    pbc: bool,
+    radial_neighbor_list,
+    angular_neighbor_list,
+):
+    """Evaluate ANI2x energy in kJ/mol from OpenMM positions in nm."""
+    positions_nm, box_vectors_nm = state
+    positions = positions_nm * unit.nanometer.conversion_factor_to(unit.angstrom)
+    box_vectors = None
+    if pbc and box_vectors_nm is not None:
+        box_vectors = box_vectors_nm * unit.nanometer.conversion_factor_to(
+            unit.angstrom
+        )
+        positions = fractional_coordinates(positions, box_vectors)
+        positions = positions - jnp.floor(positions)
+    radial_neighbors = get_neighbors(
+        positions,
+        box_vectors,
+        cell_atom_threshold=int(model.neighbor_cell_atom_threshold),
+        cutoff=float(model.radial_cutoff),
+        cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
+        periodic=pbc,
+        neighbors=radial_neighbor_list,
+    )
+    angular_neighbors = get_neighbors(
+        positions,
+        box_vectors,
+        cell_atom_threshold=int(model.neighbor_cell_atom_threshold),
+        cutoff=float(model.angular_cutoff),
+        cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
+        periodic=pbc,
+        neighbors=angular_neighbor_list,
+    )
+    return (
+        model(
+            positions,
+            species,
+            box_vectors=box_vectors,
+            radial_neighbors=radial_neighbors,
+            angular_neighbors=angular_neighbors,
+            periodic=pbc,
+        )
+        * HARTREE_TO_KJMOL
+    )

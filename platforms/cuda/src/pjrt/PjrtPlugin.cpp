@@ -1,0 +1,92 @@
+#include "PjrtPlugin.h"
+#include "PjrtHandles.h"
+#include <dlfcn.h>
+#include <stdexcept>
+#include <utility>
+
+using namespace JaxPlugin;
+using namespace std;
+
+PjrtPluginLibrary::PjrtPluginLibrary() : library(nullptr), api(nullptr) {
+}
+
+PjrtPluginLibrary::PjrtPluginLibrary(PjrtPluginLibrary&& other) noexcept :
+        library(other.library), api(other.api), pluginPath(std::move(other.pluginPath)) {
+    other.library = nullptr;
+    other.api = nullptr;
+}
+
+PjrtPluginLibrary& PjrtPluginLibrary::operator=(PjrtPluginLibrary&& other) noexcept {
+    if (this != &other) {
+        close();
+        library = other.library;
+        api = other.api;
+        pluginPath = std::move(other.pluginPath);
+        other.library = nullptr;
+        other.api = nullptr;
+    }
+    return *this;
+}
+
+PjrtPluginLibrary::~PjrtPluginLibrary() {
+    close();
+}
+
+void PjrtPluginLibrary::open(const string& path) {
+    close();
+    try {
+        pluginPath = path;
+        library = dlopen(pluginPath.c_str(), RTLD_NOW | RTLD_LOCAL);
+        if (library == nullptr)
+            throw runtime_error(string("JaxForce PJRT: failed to load PJRT plugin '") + pluginPath + "': " + dlerror());
+        auto getPjrtApi = reinterpret_cast<GetPjrtApiFn*>(dlsym(library, "GetPjrtApi"));
+        if (getPjrtApi == nullptr)
+            throw runtime_error("JaxForce PJRT: plugin is missing GetPjrtApi");
+        api = getPjrtApi();
+        if (api == nullptr)
+            throw runtime_error("JaxForce PJRT: GetPjrtApi returned null");
+        if (api->PJRT_Client_Create == nullptr || api->PJRT_Client_Devices == nullptr)
+            throw runtime_error("JaxForce PJRT: plugin API is missing required client entry points");
+        if (api->PJRT_Plugin_Initialize != nullptr) {
+            PJRT_Plugin_Initialize_Args initArgs;
+            initArgs.struct_size = PJRT_Plugin_Initialize_Args_STRUCT_SIZE;
+            initArgs.extension_start = nullptr;
+            checkError(api->PJRT_Plugin_Initialize(&initArgs), "PJRT_Plugin_Initialize");
+        }
+    }
+    catch (...) {
+        close();
+        throw;
+    }
+}
+
+void PjrtPluginLibrary::close() {
+    api = nullptr;
+    if (library != nullptr)
+        dlclose(library);
+    library = nullptr;
+    pluginPath.clear();
+}
+
+const PJRT_Api* PjrtPluginLibrary::getApi() const {
+    return api;
+}
+
+PJRT_Extension_Base* PjrtPluginLibrary::findRawExtension(PJRT_Extension_Type type) const {
+    if (api == nullptr)
+        return nullptr;
+    PJRT_Extension_Base* starts[] = {api->extension_start, api->pjrt_api_version.extension_start};
+    for (PJRT_Extension_Base* start : starts)
+        for (PJRT_Extension_Base* extension = start; extension != nullptr; extension = extension->next)
+            if (extension->type == type)
+                return extension;
+    return nullptr;
+}
+
+void PjrtPluginLibrary::checkError(PJRT_Error* error, const string& operation) const {
+    if (error == nullptr)
+        return;
+    PjrtErrorPtr errorGuard(error, makeErrorDeleter(api));
+    string message = getErrorMessageAndDestroy(api, errorGuard.release());
+    throw runtime_error("JaxForce PJRT: " + operation + " failed: " + message);
+}

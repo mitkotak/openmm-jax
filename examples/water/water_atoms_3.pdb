@@ -1,0 +1,6 @@
+REMARK    CONVERTED FROM EXTENDED XYZ
+CRYST1    5.500    5.500    5.500  90.00  90.00  90.00 P 1           1
+HETATM    1  O   HOH A   1       2.750   2.750   2.750  1.00  0.00           O
+HETATM    2  H1  HOH A   1       3.707   2.750   2.750  1.00  0.00           H
+HETATM    3  H2  HOH A   1       2.510   3.677   2.750  1.00  0.00           H
+END
