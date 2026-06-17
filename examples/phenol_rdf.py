@@ -20,16 +20,16 @@ from openmmml.mlpotential import MLPotential
 INPUT_PDB = Path(__file__).with_name("phenol.pdb")
 PHENOL_SMILES = "c1ccccc1O"
 SMALL_MOLECULE_FORCEFIELD = "gaff-2.2.20"
-CASES = ("mm", "ani2x-jax", "ani2x-nnpops")
+CASES = ("mm", "fennix-bio1-small-python", "fennix-bio1-small-jax")
 CASE_LABELS = {
     "mm": "GAFF/TIP3P",
-    "ani2x-jax": "ANI2x-JAX",
-    "ani2x-nnpops": "ANI2x-NNPOps",
+    "FeNNix (JaxForce)": "fennix-bio1-small-jax",
+    "FeNNix (PythonForce)": "fennix-bio1-small-python"
 }
 CASE_COLORS = {
     "GAFF/TIP3P": "#3d64c8",
-    "ANI2x-JAX": "#f05a9d",
-    "ANI2x-NNPOps": "#48c2c2",
+    "FeNNix (JaxForce)": "#f05a9d",
+    "FeNNix (PythonForce)": "#f5a623"
 }
 PLATFORM = "CUDA"
 TEMP_K = 300.0
@@ -165,16 +165,25 @@ def run_simulation(
             removeConstraints=True,
             periodic_neighborlist=False,
         )
-    elif model_name == "ani2x-nnpops":
+    elif model_name == "fennix-bio1-small-jax":
+        importlib.import_module("openmmjax_models.fennixpotential")
         cloned = openmm.XmlSerializer.deserialize(openmm.XmlSerializer.serialize(mm_system))
-        system = MLPotential("ani2x").createMixedSystem(
+        system = MLPotential("fennix-bio1-small-jax").createMixedSystem(
             topology,
             cloned,
             ml_atoms,
             removeConstraints=True,
             periodic_neighborlist=False,
-            modelIndex=0,
         )
+    elif model_name == "fennix-bio1-small-python":
+        importlib.import_module("openmmml.models.fennixpotential")
+        cloned = openmm.XmlSerializer.deserialize(openmm.XmlSerializer.serialize(mm_system))
+        system = MLPotential("fennix-bio1-small").createMixedSystem(
+            topology,
+            cloned,
+            ml_atoms,
+            removeConstraints=True,
+        )  
     else:
         raise ValueError(f"unknown RDF case: {model_name}")
 

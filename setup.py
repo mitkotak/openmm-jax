@@ -100,8 +100,8 @@ if __name__ == "__main__":
         py_modules=["openmmjax", "openmmjax_export"],
         ext_modules=[make_extension()],
         install_requires=[
-            "openmm>=8.2",
-            "openmmml>=1.2",
+            "openmm>=8.5.2",
+            "openmmml>=1.7",
             "equinox>=0.13.8",
             "jax",
             "jax-md>=0.2.29",

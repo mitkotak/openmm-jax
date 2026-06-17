@@ -16,10 +16,14 @@ from openmmml.mlpotential import MLPotential
 
 WATER_DIR = Path(__file__).with_name("water")
 SIZES = [3, 9, 21, 30, 96, 774, 2661, 6282, 12255, 21384, 98880, 999999]
-CASES = ("ani2x-jax", "ani2x-nnpops")
+CASES = ("fennix-bio1-small-jax", "fennix-bio1-small-python")
+# CASES = ("ani2x-jax-python", "ani2x-jax")
 CASE_LABELS = {
+    "fennix-bio1-small-jax": "FeNNix-S (JaxForce)",
+    "fennix-bio1-small-python": "FeNNiX-S (PythonForce)",
     "ani2x-jax": "ANI2x-JAX (JaxForce)",
-    "ani2x-nnpops": "ANI2x-NNPOps (PythonForce)",
+    "ani2x-jax-python": "ANI2x-JAX (PythonForce)",
+
 }
 TEMP_K = 400.0
 FRICTION_PER_PS = 1.0
@@ -32,19 +36,30 @@ PRODUCTION_STEPS = 1000
 def setup_simulation(model_name: str, size: int) -> Simulation:
     pdb = PDBFile(str(WATER_DIR / f"water_atoms_{size}.pdb"))
     topology = pdb.topology
-    if model_name == "ani2x-jax":
+    if model_name == "fennix-bio1-small-jax":
+        importlib.import_module("openmmjax_models.fennixpotential")
+        system = MLPotential("fennix-bio1-small-jax").createSystem(
+            topology,
+            removeCMMotion=False,
+        )
+    elif model_name == "fennix-bio1-small-python":
+        importlib.import_module("openmmml.models.fennixpotential")
+        system = MLPotential("fennix-bio1-small").createSystem(
+            topology,
+            removeCMMotion=False,
+        )
+    elif model_name == "ani2x-jax":
         importlib.import_module("openmmjax_models.anipotential")
         system = MLPotential("ani2x-jax").createSystem(
             topology,
             removeCMMotion=False,
         )
-    elif model_name == "ani2x-nnpops":
-        importlib.import_module("openmmml.models.anipotential")
-        system = MLPotential("ani2x").createSystem(
+    elif model_name == "ani2x-jax-python":
+        importlib.import_module("openmmjax_models.anipotential_pythonforce")
+        system = MLPotential("ani2x-jax-python").createSystem(
             topology,
             removeCMMotion=False,
-            modelIndex=0,
-        )
+        ) 
     else:
         raise ValueError(f"unknown benchmark case: {model_name}")
 
@@ -130,8 +145,8 @@ def main(argv: list[str] | None = None) -> int:
         f"equilibration={EQUILIBRATION_STEPS} steps "
         f"production={PRODUCTION_STEPS} steps"
     )
-    for case in CASES:
-        for size in SIZES:
+    for size in SIZES:
+        for case in CASES:
             run_case(case, size)
     return 0
 

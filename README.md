@@ -18,8 +18,6 @@ cmake --build build --target PythonInstall
 
 - ANI2x (single)
 - FeNNix
-- AIMNet2
-- MACE
 
 ## Design Notes
 

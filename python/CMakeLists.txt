@@ -18,5 +18,6 @@ ADD_CUSTOM_COMMAND(
 ADD_CUSTOM_TARGET(PythonWrapper DEPENDS "${WRAP_CPP}" "${WRAP_PY}")
 ADD_CUSTOM_TARGET(PythonInstall DEPENDS PythonWrapper
     COMMAND "${CMAKE_COMMAND}" -E env "OPENMM_DIR=${OPENMM_DIR}"
+        "PIP_REQUIRE_VIRTUALENV=false"
         "${PYTHON_EXECUTABLE}" -m pip install -e "${CMAKE_SOURCE_DIR}" --no-build-isolation --no-deps
 )

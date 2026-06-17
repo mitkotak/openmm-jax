@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import tempfile
+import urllib.request
 from functools import partial
 from typing import Iterable, Optional, Sequence
 
@@ -72,15 +75,25 @@ class FeNNixPotentialImpl(MLPotentialImpl):
         if matmul_prec is not None:
             jax.config.update("jax_default_matmul_precision", matmul_prec)
 
-        # Download or look up the model file to use.
-        if self.name in FeNNixPotentialImpl.KNOWN_MODELS:
-            url = FeNNixPotentialImpl.KNOWN_MODELS[self.name]
-            modelPath = self._downloadOrFindFile(f"{self.name}.fnx", url)
-        else:
-            modelPath = self.modelPath
-
         # Load the model.
-        model = fennol.FENNIX.load(modelPath, **args)
+        downloaded_model_path = None
+        if self.modelPath is not None:
+            modelPath = self.modelPath
+        elif self.name in FeNNixPotentialImpl.KNOWN_MODELS:
+            url = FeNNixPotentialImpl.KNOWN_MODELS[self.name]
+            tmp_file = tempfile.NamedTemporaryFile(suffix=".fnx", delete=False)
+            downloaded_model_path = tmp_file.name
+            tmp_file.close()
+            urllib.request.urlretrieve(url, downloaded_model_path)
+            modelPath = downloaded_model_path
+        else:
+            raise ValueError("modelPath must be provided for custom FeNNix models")
+
+        try:
+            model = fennol.FENNIX.load(modelPath, **args)
+        finally:
+            if downloaded_model_path is not None:
+                os.unlink(downloaded_model_path)
         if energy_terms is not None:
             model.set_energy_terms(energy_terms)
         energyScale = (

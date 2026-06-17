@@ -10,19 +10,18 @@ dependencies:
   - make
   - cxx-compiler
   - swig=4.3.1
-  - cuda-version=12.6
+  - cuda-version=12.9
   - cuda-cudart-dev
   - cuda-driver-dev
-  - openmm=8.2
-  - openmm-ml=1.2
+  - cuda-crt=12.9.86
+  - openmm=8.5.2
+  - openmm-ml=1.7
   - openmmforcefields=0.15.1
   - openff-toolkit
   - ambertools
   - mdtraj
   - matplotlib
   - numpy
-  - pytorch=2.6.0=*cuda126*
-  - nnpops=0.6=*cuda126py311*
   - pip:
       - -r requirements.txt
       - jax==0.10.1
