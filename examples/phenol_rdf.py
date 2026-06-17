@@ -160,7 +160,7 @@ def run_simulation(
     if model_name == "mm":
         system = mm_system
     elif model_name == "ani2x-jax":
-        importlib.import_module("openmmjax_models.anixpotential")
+        importlib.import_module("openmmjax_models.anipotential")
         cloned = openmm.XmlSerializer.deserialize(
             openmm.XmlSerializer.serialize(mm_system)
         )

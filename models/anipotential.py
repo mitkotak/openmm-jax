@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from functools import partial
 from typing import Iterable, Optional
 
@@ -12,8 +13,6 @@ import openmm.app as app
 from openmm import unit
 from .ani import (
     HARTREE_TO_KJMOL,
-    allocate_neighbor_list,
-    fractional_coordinates,
     get_neighbors,
     load_ani2x_model,
 )
@@ -24,7 +23,6 @@ from openmmjax_export import (
     configure_pjrt_plugin,
     export_jax_model,
 )
-
 
 class ANI2xPotentialImplFactory(MLPotentialImplFactory):
     def createImpl(self, name, modelPath=None, **_args):
@@ -150,6 +148,58 @@ __all__ = [
     "ANI2xPotentialImplFactory",
     "ANI2xPotentialImpl",
 ]
+
+
+def fractional_coordinates(positions, box_vectors):
+    z = positions[..., 2] / box_vectors[2, 2]
+    y = (positions[..., 1] - z * box_vectors[2, 1]) / box_vectors[1, 1]
+    x = (
+        positions[..., 0] - y * box_vectors[1, 0] - z * box_vectors[2, 0]
+    ) / box_vectors[0, 0]
+    return jnp.stack((x, y, z), axis=-1)
+
+
+def neighbor_allocation_positions(
+    num_atoms: int,
+    *,
+    dtype=jnp.float32,
+    periodic: bool,
+):
+    if num_atoms <= 0:
+        return jnp.zeros((0, 3), dtype=dtype)
+    if not periodic:
+        return jnp.zeros((num_atoms, 3), dtype=dtype)
+
+    grid_size = max(1, math.ceil(num_atoms ** (1.0 / 3.0)))
+    atom_ids = jnp.arange(num_atoms, dtype=jnp.int32)
+    x = atom_ids % grid_size
+    y = (atom_ids // grid_size) % grid_size
+    z = atom_ids // (grid_size * grid_size)
+    return (jnp.stack((x, y, z), axis=-1).astype(dtype) + 0.5) / grid_size
+
+
+def allocate_neighbor_list(
+    num_atoms: int,
+    allocation_box,
+    *,
+    cell_atom_threshold: int,
+    cutoff: float,
+    cell_capacity_multiplier: float,
+    periodic: bool,
+):
+    allocation_positions = neighbor_allocation_positions(
+        num_atoms,
+        dtype=jnp.float32,
+        periodic=periodic,
+    )
+    return get_neighbors(
+        allocation_positions,
+        allocation_box,
+        cell_atom_threshold=cell_atom_threshold,
+        cutoff=float(cutoff),
+        cell_capacity_multiplier=cell_capacity_multiplier,
+        periodic=periodic,
+    )
 
 
 def _energyANI(

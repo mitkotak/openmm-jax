@@ -33,7 +33,7 @@ def setup_simulation(model_name: str, size: int) -> Simulation:
     pdb = PDBFile(str(WATER_DIR / f"water_atoms_{size}.pdb"))
     topology = pdb.topology
     if model_name == "ani2x-jax":
-        importlib.import_module("openmmjax_models.anixpotential")
+        importlib.import_module("openmmjax_models.anipotential")
         system = MLPotential("ani2x-jax").createSystem(
             topology,
             removeCMMotion=False,

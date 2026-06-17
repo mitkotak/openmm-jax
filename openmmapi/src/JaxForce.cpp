@@ -1,5 +1,3 @@
-// Structure borrowed from https://github.com/openmm/openmm-torch/blob/master/openmmapi/src/TorchForce.cpp
-
 #include "JaxForce.h"
 #include "internal/JaxForceImpl.h"
 #include "internal/JaxBase64.h"

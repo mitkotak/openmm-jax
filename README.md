@@ -13,6 +13,12 @@ cmake -S . -B build \
 cmake --build build --target install --parallel
 cmake --build build --target PythonInstall
 ```
+## Supported Models
+
+- ANI2x (single)
+- FeNNix
+- AIMNet2
+- MACE
 
 ## Design Notes
 
