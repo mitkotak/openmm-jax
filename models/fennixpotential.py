@@ -9,14 +9,13 @@ import jax
 import jax.numpy as jnp
 import openmm
 import openmm.app as app
-from openmm import unit
-
-from openmmml.mlpotential import MLPotential, MLPotentialImpl, MLPotentialImplFactory
 import openmmjax
+from openmm import unit
 from openmmjax_export import (
     configure_pjrt_plugin,
     export_jax_model,
 )
+from openmmml.mlpotential import MLPotential, MLPotentialImpl, MLPotentialImplFactory
 
 
 class FeNNixPotentialImplFactory(MLPotentialImplFactory):
@@ -108,8 +107,7 @@ class FeNNixPotentialImpl(MLPotentialImpl):
         )
 
         periodic = (
-            topology.getPeriodicBoxVectors() is not None
-            or system.usesPeriodicBoundaryConditions()
+            topology.getPeriodicBoxVectors() is not None or system.usesPeriodicBoundaryConditions()
         )
         forcePeriodic = periodic and periodic_neighborlist
         dtype = np.float32
@@ -154,15 +152,11 @@ class FeNNixPotentialImpl(MLPotentialImpl):
         )
 
         def _energy_kjmol(positions_nm, box_vectors_nm=None):
-            selected_positions = (
-                positions_nm if indices is None else positions_nm[indices]
-            )
+            selected_positions = positions_nm if indices is None else positions_nm[indices]
             return energy_fn((selected_positions, box_vectors_nm))
 
         def _energy_and_forces_kjmol(positions_nm, box_vectors_nm=None):
-            selected_positions = (
-                positions_nm if indices is None else positions_nm[indices]
-            )
+            selected_positions = positions_nm if indices is None else positions_nm[indices]
             energy, forces = energy_and_forces_fn((selected_positions, box_vectors_nm))
             if indices is not None:
                 forces = jnp.zeros_like(positions_nm).at[indices].set(forces)
@@ -172,14 +166,12 @@ class FeNNixPotentialImpl(MLPotentialImpl):
             _energy, forces = _energy_and_forces_kjmol(positions_nm, box_vectors_nm)
             return forces
 
-        force_mlir, energy_mlir, energy_and_forces_mlir, compile_options_base64 = (
-            export_jax_model(
-                num_system_atoms=numSystemAtoms,
-                force_function=_forces_kjmol,
-                energy_function=_energy_kjmol,
-                energy_and_forces_function=_energy_and_forces_kjmol,
-                periodic=forcePeriodic,
-            )
+        force_mlir, energy_mlir, energy_and_forces_mlir, compile_options_base64 = export_jax_model(
+            num_system_atoms=numSystemAtoms,
+            force_function=_forces_kjmol,
+            energy_function=_energy_kjmol,
+            energy_and_forces_function=_energy_and_forces_kjmol,
+            periodic=forcePeriodic,
         )
 
         force = openmmjax.JaxForce(
@@ -216,8 +208,7 @@ def _preprocessFeNNix(
     positions_nm, box_vectors_nm = state
     preproc_in = {
         **static_inputs,
-        "coordinates": positions_nm
-        * unit.nanometer.conversion_factor_to(unit.angstrom),
+        "coordinates": positions_nm * unit.nanometer.conversion_factor_to(unit.angstrom),
     }
     if pbc and box_vectors_nm is not None:
         cells_ang = box_vectors_nm * unit.nanometer.conversion_factor_to(unit.angstrom)
@@ -288,7 +279,5 @@ def _inverse_3x3(matrix):
         ],
         axis=-2,
     )
-    determinant = (
-        a * cofactors[..., 0, 0] + b * cofactors[..., 1, 0] + c * cofactors[..., 2, 0]
-    )
+    determinant = a * cofactors[..., 0, 0] + b * cofactors[..., 1, 0] + c * cofactors[..., 2, 0]
     return cofactors / determinant[..., None, None]

@@ -85,9 +85,7 @@ def run_simulation(
     simulation.context.getState(energy=True)
     elapsed = time.perf_counter() - start
     time_per_step = elapsed * unit.seconds / PRODUCTION_STEPS
-    ns_per_day = (integrator.getStepSize() / time_per_step) / (
-        unit.nanoseconds / unit.day
-    )
+    ns_per_day = (integrator.getStepSize() / time_per_step) / (unit.nanoseconds / unit.day)
     print(
         f"  {label:28s} {atom_count:>6} atoms: {float(ns_per_day):10.3f} ns/day "
         f"({PRODUCTION_STEPS} steps in {elapsed:.2f} s)",

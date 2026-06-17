@@ -17,7 +17,6 @@ from openff.toolkit import Molecule
 from openmmforcefields.generators import GAFFTemplateGenerator
 from openmmml.mlpotential import MLPotential
 
-
 INPUT_PDB = Path(__file__).with_name("phenol.pdb")
 PHENOL_SMILES = "c1ccccc1O"
 SMALL_MOLECULE_FORCEFIELD = "gaff-2.2.20"
@@ -55,7 +54,6 @@ PRODUCTION_STEPS = int(round(PRODUCTION_PS * 1000.0 / PRODUCTION_TIMESTEP_FS))
 RDF_DISCARD_STEPS = int(round(RDF_DISCARD_PS * 1000.0 / PRODUCTION_TIMESTEP_FS))
 
 
-
 def create_forcefield(cache_path: Path) -> app.ForceField:
     phenol = Molecule.from_smiles(PHENOL_SMILES)
     phenol.name = "phenol"
@@ -70,9 +68,7 @@ def create_forcefield(cache_path: Path) -> app.ForceField:
     return forcefield
 
 
-def create_mm_system(
-    topology: app.Topology, forcefield: app.ForceField
-) -> openmm.System:
+def create_mm_system(topology: app.Topology, forcefield: app.ForceField) -> openmm.System:
     forcefield_kwargs = {
         "constraints": app.HBonds,
         "rigidWater": True,
@@ -161,9 +157,7 @@ def run_simulation(
         system = mm_system
     elif model_name == "ani2x-jax":
         importlib.import_module("openmmjax_models.anipotential")
-        cloned = openmm.XmlSerializer.deserialize(
-            openmm.XmlSerializer.serialize(mm_system)
-        )
+        cloned = openmm.XmlSerializer.deserialize(openmm.XmlSerializer.serialize(mm_system))
         system = MLPotential(model_name).createMixedSystem(
             topology,
             cloned,
@@ -172,9 +166,7 @@ def run_simulation(
             periodic_neighborlist=False,
         )
     elif model_name == "ani2x-nnpops":
-        cloned = openmm.XmlSerializer.deserialize(
-            openmm.XmlSerializer.serialize(mm_system)
-        )
+        cloned = openmm.XmlSerializer.deserialize(openmm.XmlSerializer.serialize(mm_system))
         system = MLPotential("ani2x").createMixedSystem(
             topology,
             cloned,
@@ -204,9 +196,7 @@ def run_simulation(
         raise ValueError("expected one phenol oxygen and at least one water oxygen")
 
     rdf_atom_indices = np.concatenate((phenol_o, water_o)).astype(int)
-    rdf_pairs = np.array(
-        [[0, index] for index in range(1, len(rdf_atom_indices))], dtype=int
-    )
+    rdf_pairs = np.array([[0, index] for index in range(1, len(rdf_atom_indices))], dtype=int)
     rdf_topology = md_topology.subset(rdf_atom_indices.tolist())
     rdf_positions = []
     rdf_box_vectors = []
@@ -222,10 +212,7 @@ def run_simulation(
         state = simulation.context.getState(getPositions=True, enforcePeriodicBox=True)
         positions = state.getPositions(asNumpy=True).value_in_unit(unit.nanometer)
         box_vectors = np.asarray(
-            [
-                vector.value_in_unit(unit.nanometer)
-                for vector in state.getPeriodicBoxVectors()
-            ]
+            [vector.value_in_unit(unit.nanometer) for vector in state.getPeriodicBoxVectors()]
         )
         rdf_positions.append(positions[rdf_atom_indices])
         rdf_box_vectors.append(box_vectors)
@@ -247,9 +234,7 @@ def compute_rdf(
 ) -> tuple[np.ndarray, np.ndarray]:
     if not positions_by_sample:
         raise ValueError("no RDF samples were collected")
-    trajectory = md.Trajectory(
-        np.asarray(positions_by_sample, dtype=np.float32), topology
-    )
+    trajectory = md.Trajectory(np.asarray(positions_by_sample, dtype=np.float32), topology)
     trajectory.unitcell_vectors = np.asarray(box_vectors_by_sample, dtype=np.float32)
     return md.compute_rdf(
         trajectory,
@@ -303,10 +288,7 @@ def plot_rdfs(
 
 
 def main() -> None:
-    output_dir = (
-        Path.cwd()
-        / f"phenol_rdf_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
-    )
+    output_dir = Path.cwd() / f"phenol_rdf_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
     output_dir.mkdir(parents=True, exist_ok=True)
     prepared = setup_simulation(output_dir)
 
@@ -317,9 +299,7 @@ def main() -> None:
             case,
             prepared,
         )
-        radii, rdf = compute_rdf(
-            rdf_positions, rdf_box_vectors, rdf_pairs, rdf_topology
-        )
+        radii, rdf = compute_rdf(rdf_positions, rdf_box_vectors, rdf_pairs, rdf_topology)
         rdf_series.append((CASE_LABELS.get(case, case), radii, rdf))
     plot_path = plot_rdfs(rdf_series, output_dir)
     print(f"RDF plot: {plot_path}")

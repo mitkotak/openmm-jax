@@ -93,9 +93,7 @@ def get_compile_options_base64(
     num_partitions: int = 1,
 ) -> str:
     """Return serialized XLA compile options encoded safely for SWIG strings."""
-    return base64.b64encode(get_compile_options(num_replicas, num_partitions)).decode(
-        "ascii"
-    )
+    return base64.b64encode(get_compile_options(num_replicas, num_partitions)).decode("ascii")
 
 
 def export_jax_model(

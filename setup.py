@@ -7,10 +7,10 @@ by CMake.
 
 from __future__ import annotations
 
+import importlib
 import os
 import platform
 import re
-import importlib
 from pathlib import Path
 
 from setuptools import Extension, setup
@@ -108,5 +108,10 @@ if __name__ == "__main__":
             "jaxlib",
             "numpy",
         ],
+        extras_require={
+            "lint": [
+                "ruff>=0.12",
+            ],
+        },
         python_requires=">=3.11",
     )

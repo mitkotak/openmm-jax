@@ -10,7 +10,6 @@ import jax.numpy as jnp
 import numpy as np
 from jax_md import partition, space
 
-
 jax.config.update("jax_default_matmul_precision", "highest")
 
 _DEFAULT_MODEL_PATH = Path(__file__).resolve().with_name("ani2x_model0.eqx")
@@ -111,9 +110,7 @@ class _ANI2xCheckpoint(eqx.Module):
         for layer_index in range(len(network_sizes) - 1):
             d_in = network_sizes[layer_index]
             d_out = network_sizes[layer_index + 1]
-            self.layer_weights.append(
-                jnp.zeros((num_species, d_in, d_out), dtype=jnp.float32)
-            )
+            self.layer_weights.append(jnp.zeros((num_species, d_in, d_out), dtype=jnp.float32))
             self.layer_biases.append(jnp.zeros((num_species, d_out), dtype=jnp.float32))
 
 
@@ -125,9 +122,7 @@ def _active_pair_ids(
     pair_to_index_np = np.asarray(pair_to_index, dtype=np.int32)
     return tuple(
         int(pair_id)
-        for pair_id in np.unique(
-            pair_to_index_np[np.ix_(active_species_np, active_species_np)]
-        )
+        for pair_id in np.unique(pair_to_index_np[np.ix_(active_species_np, active_species_np)])
     )
 
 
@@ -201,9 +196,7 @@ class ANI2x(eqx.Module):
         species=None,
     ):
         self.neighbor_cell_atom_threshold = config["neighbor_cell_atom_threshold"]
-        self.neighbor_cell_capacity_multiplier = config[
-            "neighbor_cell_capacity_multiplier"
-        ]
+        self.neighbor_cell_capacity_multiplier = config["neighbor_cell_capacity_multiplier"]
         self.radial_eta = config["radial_eta"]
         self.angular_eta = config["angular_eta"]
         self.radial_divisions = config["radial_divisions"]
@@ -259,9 +252,7 @@ class ANI2x(eqx.Module):
             if layer_index == 0:
                 weights = weights[:, first_layer_cols, :]
             layer_weights.append(weights)
-            layer_biases.append(
-                checkpoint.layer_biases[layer_index][active_species_idx]
-            )
+            layer_biases.append(checkpoint.layer_biases[layer_index][active_species_idx])
         self.layer_weights = layer_weights
         self.layer_biases = layer_biases
 
@@ -289,31 +280,23 @@ class ANI2x(eqx.Module):
 
         local_species = species_lookup[species]
 
-        radial_displacements, radial_safe_neighbors, radial_neighbor_mask = (
-            dense_neighbor_edges(
-                positions,
-                radial_neighbor_idx,
-                box_vectors=box_vectors,
-            )
+        radial_displacements, radial_safe_neighbors, radial_neighbor_mask = dense_neighbor_edges(
+            positions,
+            radial_neighbor_idx,
+            box_vectors=box_vectors,
         )
         local_radial_neighbor_species = local_species[radial_safe_neighbors]
 
         # R_ij is the distance between atom i and radial neighbor j.
         radial_distance2 = jnp.sum(radial_displacements**2, axis=-1)
         radial_distance = jnp.sqrt(jnp.clip(radial_distance2, min=1e-5))
-        radial_real_neighbor = radial_neighbor_mask & (
-            radial_safe_neighbors != atom_ids[:, None]
-        )
+        radial_real_neighbor = radial_neighbor_mask & (radial_safe_neighbors != atom_ids[:, None])
 
         # Eq. 3: radial symmetry terms, then sum them by species.
         radial_mask = radial_real_neighbor & (radial_distance < self.radial_cutoff)
-        radial_switch = (
-            piecewise_cutoff(radial_distance, self.radial_cutoff) * radial_mask
-        )
+        radial_switch = piecewise_cutoff(radial_distance, self.radial_cutoff) * radial_mask
         radial_terms = (
-            jnp.exp(
-                -self.radial_eta * (radial_distance[..., None] - radial_shifts) ** 2
-            )
+            jnp.exp(-self.radial_eta * (radial_distance[..., None] - radial_shifts) ** 2)
             * (0.25 * radial_switch)[..., None]
         )
 
@@ -345,16 +328,10 @@ class ANI2x(eqx.Module):
             angular_safe_neighbors != atom_ids[:, None]
         )
         angular_mask = angular_real_neighbor & (angular_distance < self.angular_cutoff)
-        angular_switch = (
-            piecewise_cutoff(angular_distance, self.angular_cutoff) * angular_mask
-        )
-        direction = angular_displacements / jnp.clip(
-            angular_distance[..., None], min=1e-5
-        )
+        angular_switch = piecewise_cutoff(angular_distance, self.angular_cutoff) * angular_mask
+        direction = angular_displacements / jnp.clip(angular_distance[..., None], min=1e-5)
 
-        neighbor_i_np, neighbor_j_np = np.triu_indices(
-            int(angular_neighbor_idx.shape[1]), k=1
-        )
+        neighbor_i_np, neighbor_j_np = np.triu_indices(int(angular_neighbor_idx.shape[1]), k=1)
         neighbor_i = jnp.asarray(neighbor_i_np, dtype=jnp.int32)
         neighbor_j = jnp.asarray(neighbor_j_np, dtype=jnp.int32)
         pair_mask = angular_mask[:, neighbor_i] & angular_mask[:, neighbor_j]
@@ -367,18 +344,17 @@ class ANI2x(eqx.Module):
         angular_part = (1 + jnp.cos(angle[..., None] - angular_shifts)) ** self.zeta
         switch_scale = angular_switch * (2.0 * 0.5**self.zeta) ** 0.5
         angular_part = (
-            angular_part
-            * (switch_scale[:, neighbor_i] * switch_scale[:, neighbor_j])[..., None]
+            angular_part * (switch_scale[:, neighbor_i] * switch_scale[:, neighbor_j])[..., None]
         )
 
         scaled_distance = 0.5 * jnp.sqrt(self.angular_eta) * angular_distance
-        pair_distance = (
-            scaled_distance[:, neighbor_i] + scaled_distance[:, neighbor_j]
-        )[..., None]
+        pair_distance = (scaled_distance[:, neighbor_i] + scaled_distance[:, neighbor_j])[
+            ..., None
+        ]
         angular_radial_part = jnp.exp(-((pair_distance - angular_radial_shifts) ** 2))
-        angular_terms = (
-            angular_part[..., None, :] * angular_radial_part[..., :, None]
-        ).reshape(num_atoms, -1, self.angular_basis_width)
+        angular_terms = (angular_part[..., None, :] * angular_radial_part[..., :, None]).reshape(
+            num_atoms, -1, self.angular_basis_width
+        )
 
         pair_index = pair_to_index[
             angular_neighbor_species[:, neighbor_i],
@@ -386,9 +362,7 @@ class ANI2x(eqx.Module):
         ]
         active_pair = pair_lookup[pair_index]
         pair_active = active_pair >= 0
-        angular_terms = jnp.where(
-            (pair_mask & pair_active)[..., None], angular_terms, 0.0
-        )
+        angular_terms = jnp.where((pair_mask & pair_active)[..., None], angular_terms, 0.0)
         pair_one_hot = jax.nn.one_hot(
             active_pair,
             self.num_active_pairs,
@@ -430,9 +404,7 @@ class ANI2x(eqx.Module):
                 x = jax.nn.celu(x, alpha=self.celu_alpha)
 
         mlp_energies = x.squeeze(-1)
-        return jnp.sum(
-            mlp_energies + jax.lax.stop_gradient(self.atom_energies[local_species])
-        )
+        return jnp.sum(mlp_energies + jax.lax.stop_gradient(self.atom_energies[local_species]))
 
     def __call__(
         self,
@@ -482,12 +454,10 @@ class ANI2x(eqx.Module):
 
 
 def save_ani2x_model(path: str | PathLike, model: ANI2x):
-    if model.num_active_species != len(
-        model.species_lookup
-    ) or model.num_active_pairs != len(model.pair_lookup):
-        raise ValueError(
-            "save_ani2x_model requires a model loaded with the full ANI AEV basis."
-        )
+    if model.num_active_species != len(model.species_lookup) or model.num_active_pairs != len(
+        model.pair_lookup
+    ):
+        raise ValueError("save_ani2x_model requires a model loaded with the full ANI AEV basis.")
     config = {
         "angular_basis_width": model.angular_basis_width,
         "angular_cutoff": model.angular_cutoff,

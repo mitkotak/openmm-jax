@@ -10,19 +10,20 @@ import jax
 import jax.numpy as jnp
 import openmm
 import openmm.app as app
+import openmmjax
 from openmm import unit
+from openmmjax_export import (
+    configure_pjrt_plugin,
+    export_jax_model,
+)
+from openmmml.mlpotential import MLPotential, MLPotentialImpl, MLPotentialImplFactory
+
 from .ani import (
     HARTREE_TO_KJMOL,
     get_neighbors,
     load_ani2x_model,
 )
 
-from openmmml.mlpotential import MLPotential, MLPotentialImpl, MLPotentialImplFactory
-import openmmjax
-from openmmjax_export import (
-    configure_pjrt_plugin,
-    export_jax_model,
-)
 
 class ANI2xPotentialImplFactory(MLPotentialImplFactory):
     def createImpl(self, name, modelPath=None, **_args):
@@ -57,8 +58,7 @@ class ANI2xPotentialImpl(MLPotentialImpl):
         numSystemAtoms = system.getNumParticles()
 
         periodic = (
-            topology.getPeriodicBoxVectors() is not None
-            or system.usesPeriodicBoundaryConditions()
+            topology.getPeriodicBoxVectors() is not None or system.usesPeriodicBoundaryConditions()
         )
         forcePeriodic = periodic and periodic_neighborlist
         model_path = self.modelPath if modelPath is None else modelPath
@@ -104,29 +104,23 @@ class ANI2xPotentialImpl(MLPotentialImpl):
         )
 
         def _energy_kjmol(positions_nm, box_vectors_nm=None):
-            selected_positions = (
-                positions_nm if indices is None else positions_nm[indices]
-            )
+            selected_positions = positions_nm if indices is None else positions_nm[indices]
             return energy_fn((selected_positions, box_vectors_nm))
 
         def _energy_and_forces_kjmol(positions_nm, box_vectors_nm=None):
-            energy, minus_forces = jax.value_and_grad(_energy_kjmol)(
-                positions_nm, box_vectors_nm
-            )
+            energy, minus_forces = jax.value_and_grad(_energy_kjmol)(positions_nm, box_vectors_nm)
             return energy, -minus_forces
 
         def _forces_kjmol(positions_nm, box_vectors_nm=None):
             _energy, forces = _energy_and_forces_kjmol(positions_nm, box_vectors_nm)
             return forces
 
-        force_mlir, energy_mlir, energy_and_forces_mlir, compile_options_base64 = (
-            export_jax_model(
-                num_system_atoms=numSystemAtoms,
-                force_function=_forces_kjmol,
-                energy_function=_energy_kjmol,
-                energy_and_forces_function=_energy_and_forces_kjmol,
-                periodic=forcePeriodic,
-            )
+        force_mlir, energy_mlir, energy_and_forces_mlir, compile_options_base64 = export_jax_model(
+            num_system_atoms=numSystemAtoms,
+            force_function=_forces_kjmol,
+            energy_function=_energy_kjmol,
+            energy_and_forces_function=_energy_and_forces_kjmol,
+            periodic=forcePeriodic,
         )
         force = openmmjax.JaxForce(
             force_mlir,
@@ -153,9 +147,7 @@ __all__ = [
 def fractional_coordinates(positions, box_vectors):
     z = positions[..., 2] / box_vectors[2, 2]
     y = (positions[..., 1] - z * box_vectors[2, 1]) / box_vectors[1, 1]
-    x = (
-        positions[..., 0] - y * box_vectors[1, 0] - z * box_vectors[2, 0]
-    ) / box_vectors[0, 0]
+    x = (positions[..., 0] - y * box_vectors[1, 0] - z * box_vectors[2, 0]) / box_vectors[0, 0]
     return jnp.stack((x, y, z), axis=-1)
 
 
@@ -215,9 +207,7 @@ def _energyANI(
     positions = positions_nm * unit.nanometer.conversion_factor_to(unit.angstrom)
     box_vectors = None
     if pbc and box_vectors_nm is not None:
-        box_vectors = box_vectors_nm * unit.nanometer.conversion_factor_to(
-            unit.angstrom
-        )
+        box_vectors = box_vectors_nm * unit.nanometer.conversion_factor_to(unit.angstrom)
         positions = fractional_coordinates(positions, box_vectors)
         positions = positions - jnp.floor(positions)
     radial_neighbors = get_neighbors(
