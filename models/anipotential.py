@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import openmm
 import openmm.app as app
 import openmmjax
+from jax_md import space
 from openmm import unit
 from openmmjax_export import (
     configure_pjrt_plugin,
@@ -20,6 +21,8 @@ from openmmml.mlpotential import MLPotential, MLPotentialImpl, MLPotentialImplFa
 
 from .ani import (
     HARTREE_TO_KJMOL,
+    _DEFAULT_ENSEMBLE_MODEL_PATH,
+    _DEFAULT_SINGLE_MODEL_PATH,
     get_neighbors,
     load_ani2x_model,
 )
@@ -31,7 +34,13 @@ class ANI2xPotentialImplFactory(MLPotentialImplFactory):
 
 
 class ANI2xPotentialImpl(MLPotentialImpl):
-    def __init__(self, _name, modelPath=None):
+    MODEL_PATHS = {
+        "ani2x-jax-ensemble": _DEFAULT_ENSEMBLE_MODEL_PATH,
+        "ani2x-jax-model0": _DEFAULT_SINGLE_MODEL_PATH,
+    }
+
+    def __init__(self, name, modelPath=None):
+        self.name = name
         self.modelPath = modelPath
 
     def addForces(
@@ -61,7 +70,9 @@ class ANI2xPotentialImpl(MLPotentialImpl):
             topology.getPeriodicBoxVectors() is not None or system.usesPeriodicBoundaryConditions()
         )
         forcePeriodic = periodic and periodic_neighborlist
-        model_path = self.modelPath if modelPath is None else modelPath
+        model_path = modelPath if modelPath is not None else self.modelPath
+        if model_path is None:
+            model_path = self.MODEL_PATHS.get(self.name)
         model = load_ani2x_model(
             model_path,
             atomic_numbers=species,
@@ -135,7 +146,12 @@ class ANI2xPotentialImpl(MLPotentialImpl):
         force.addToSystem(system)
 
 
-MLPotential.registerImplFactory("ani2x-jax", ANI2xPotentialImplFactory())
+for model_name in (
+    "ani2x-jax",
+    "ani2x-jax-ensemble",
+    "ani2x-jax-model0",
+):
+    MLPotential.registerImplFactory(model_name, ANI2xPotentialImplFactory())
 
 __all__ = [
     "MLPotential",
@@ -144,35 +160,9 @@ __all__ = [
 ]
 
 
-def fractional_coordinates(positions, box_vectors):
-    z = positions[..., 2] / box_vectors[2, 2]
-    y = (positions[..., 1] - z * box_vectors[2, 1]) / box_vectors[1, 1]
-    x = (positions[..., 0] - y * box_vectors[1, 0] - z * box_vectors[2, 0]) / box_vectors[0, 0]
-    return jnp.stack((x, y, z), axis=-1)
-
-
-def neighbor_allocation_positions(
-    num_atoms: int,
-    *,
-    dtype=jnp.float32,
-    periodic: bool,
-):
-    if num_atoms <= 0:
-        return jnp.zeros((0, 3), dtype=dtype)
-    if not periodic:
-        return jnp.zeros((num_atoms, 3), dtype=dtype)
-
-    grid_size = max(1, math.ceil(num_atoms ** (1.0 / 3.0)))
-    atom_ids = jnp.arange(num_atoms, dtype=jnp.int32)
-    x = atom_ids % grid_size
-    y = (atom_ids // grid_size) % grid_size
-    z = atom_ids // (grid_size * grid_size)
-    return (jnp.stack((x, y, z), axis=-1).astype(dtype) + 0.5) / grid_size
-
-
 def allocate_neighbor_list(
     num_atoms: int,
-    allocation_box,
+    allocation_box=None,
     *,
     cell_atom_threshold: int,
     cutoff: float,
@@ -192,6 +182,48 @@ def allocate_neighbor_list(
         cell_capacity_multiplier=cell_capacity_multiplier,
         periodic=periodic,
     )
+
+
+def fractional_coordinates(positions, box_vectors):
+    jax_box = jnp.swapaxes(jnp.asarray(box_vectors, dtype=positions.dtype), -1, -2)
+    return space.transform(_restricted_box_inverse(jax_box), positions)
+
+
+def _restricted_box_inverse(box):
+    """Invert OpenMM's restricted upper-triangular box without a solver op."""
+    a = box[0, 0]
+    b = box[0, 1]
+    c = box[0, 2]
+    d = box[1, 1]
+    e = box[1, 2]
+    f = box[2, 2]
+    return jnp.array(
+        [
+            [1.0 / a, -b / (a * d), (b * e - c * d) / (a * d * f)],
+            [0.0, 1.0 / d, -e / (d * f)],
+            [0.0, 0.0, 1.0 / f],
+        ],
+        dtype=box.dtype,
+    )
+
+
+def neighbor_allocation_positions(
+    num_atoms: int,
+    *,
+    dtype=jnp.float32,
+    periodic: bool,
+):
+    if num_atoms <= 0:
+        return jnp.zeros((0, 3), dtype=dtype)
+    if not periodic:
+        return jnp.zeros((num_atoms, 3), dtype=dtype)
+
+    grid_size = max(1, math.ceil(num_atoms ** (1.0 / 3.0)))
+    atom_ids = jnp.arange(num_atoms, dtype=jnp.int32)
+    x = atom_ids % grid_size
+    y = (atom_ids // grid_size) % grid_size
+    z = atom_ids // (grid_size * grid_size)
+    return (jnp.stack((x, y, z), axis=-1).astype(dtype) + 0.5) / grid_size
 
 
 def _energyANI(

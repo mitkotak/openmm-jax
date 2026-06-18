@@ -12,7 +12,8 @@ from jax_md import partition, space
 
 jax.config.update("jax_default_matmul_precision", "highest")
 
-_DEFAULT_MODEL_PATH = Path(__file__).resolve().with_name("ani2x_model0.eqx")
+_DEFAULT_ENSEMBLE_MODEL_PATH = Path(__file__).resolve().with_name("ani2x_ensemble.eqx")
+_DEFAULT_SINGLE_MODEL_PATH = Path(__file__).resolve().with_name("ani2x_model0.eqx")
 HARTREE_TO_KJMOL = 2625.5002
 
 
@@ -50,7 +51,7 @@ def get_neighbors(
     cell_capacity_multiplier: float,
     extra_capacity: int = 0,
     neighbors=None,
-    periodic: bool = True,
+    periodic: bool = False,
 ):
     num_atoms = int(positions.shape[0])
     use_cell_list = periodic and num_atoms >= cell_atom_threshold
@@ -102,6 +103,7 @@ class _ANI2xCheckpoint(eqx.Module):
 
     def __init__(self, config: dict):
         num_species = config["num_species"]
+        num_models = config.get("num_models")
         network_sizes = tuple(config["network_sizes"])
 
         self.atom_energies = jnp.zeros(num_species, dtype=jnp.float32)
@@ -110,8 +112,18 @@ class _ANI2xCheckpoint(eqx.Module):
         for layer_index in range(len(network_sizes) - 1):
             d_in = network_sizes[layer_index]
             d_out = network_sizes[layer_index + 1]
-            self.layer_weights.append(jnp.zeros((num_species, d_in, d_out), dtype=jnp.float32))
-            self.layer_biases.append(jnp.zeros((num_species, d_out), dtype=jnp.float32))
+            if num_models is None:
+                self.layer_weights.append(
+                    jnp.zeros((num_species, d_in, d_out), dtype=jnp.float32)
+                )
+                self.layer_biases.append(jnp.zeros((num_species, d_out), dtype=jnp.float32))
+            else:
+                self.layer_weights.append(
+                    jnp.zeros((num_models, num_species, d_in, d_out), dtype=jnp.float32)
+                )
+                self.layer_biases.append(
+                    jnp.zeros((num_models, num_species, d_out), dtype=jnp.float32)
+                )
 
 
 def _active_pair_ids(
@@ -185,6 +197,7 @@ class ANI2x(eqx.Module):
     angular_basis_width: int = eqx.field(static=True)
     species_lookup: tuple[int, ...] = eqx.field(static=True)
     pair_lookup: tuple[int, ...] = eqx.field(static=True)
+    num_models: int = eqx.field(static=True)
     num_active_species: int = eqx.field(static=True)
     num_active_pairs: int = eqx.field(static=True)
 
@@ -211,6 +224,7 @@ class ANI2x(eqx.Module):
         self.pair_to_index = tuple(tuple(row) for row in config["pair_to_index"])
         num_species = config["num_species"]
         num_species_pairs = config["num_species_pairs"]
+        self.num_models = int(config.get("num_models", 1))
         self.angular_basis_width = config["angular_basis_width"]
 
         if species is None:
@@ -248,11 +262,18 @@ class ANI2x(eqx.Module):
         layer_weights = []
         layer_biases = []
         for layer_index, checkpoint_weights in enumerate(checkpoint.layer_weights):
-            weights = checkpoint_weights[active_species_idx]
+            if checkpoint_weights.ndim == 3:
+                weights = checkpoint_weights[active_species_idx][None, ...]
+            else:
+                weights = checkpoint_weights[:, active_species_idx]
             if layer_index == 0:
-                weights = weights[:, first_layer_cols, :]
+                weights = weights[:, :, first_layer_cols, :]
             layer_weights.append(weights)
-            layer_biases.append(checkpoint.layer_biases[layer_index][active_species_idx])
+            checkpoint_biases = checkpoint.layer_biases[layer_index]
+            if checkpoint_biases.ndim == 2:
+                layer_biases.append(checkpoint_biases[active_species_idx][None, ...])
+            else:
+                layer_biases.append(checkpoint_biases[:, active_species_idx])
         self.layer_weights = layer_weights
         self.layer_biases = layer_biases
 
@@ -380,7 +401,7 @@ class ANI2x(eqx.Module):
         )
 
         def select_atom_species(values_by_species):
-            return jnp.einsum("ns,nso->no", species_selector, values_by_species)
+            return jnp.einsum("ns,nmso->nmo", species_selector, values_by_species)
 
         radial_width = radial_aev.shape[-1]
         weights = self.layer_weights[0]
@@ -388,9 +409,9 @@ class ANI2x(eqx.Module):
 
         # Evaluate per-species lanes to avoid materializing per-atom weight tensors.
         x = (
-            jnp.einsum("ni,sio->nso", radial_aev, weights[:, :radial_width, :])
-            + jnp.einsum("ni,sio->nso", angular_aev, weights[:, radial_width:, :])
-            + bias[None, :, :]
+            jnp.einsum("ni,msio->nmso", radial_aev, weights[:, :, :radial_width, :])
+            + jnp.einsum("ni,msio->nmso", angular_aev, weights[:, :, radial_width:, :])
+            + bias[None, :, :, :]
         )
         x = select_atom_species(x)
         if len(self.layer_weights) > 1:
@@ -399,12 +420,13 @@ class ANI2x(eqx.Module):
         for layer_index in range(1, len(self.layer_weights)):
             weights = self.layer_weights[layer_index]
             bias = self.layer_biases[layer_index]
-            x = select_atom_species(jnp.einsum("ni,sio->nso", x, weights) + bias)
+            x = select_atom_species(jnp.einsum("nmi,msio->nmso", x, weights) + bias)
             if layer_index < len(self.layer_weights) - 1:
                 x = jax.nn.celu(x, alpha=self.celu_alpha)
 
         mlp_energies = x.squeeze(-1)
-        return jnp.sum(mlp_energies + jax.lax.stop_gradient(self.atom_energies[local_species]))
+        atom_energies = jax.lax.stop_gradient(self.atom_energies[local_species])
+        return jnp.mean(jnp.sum(mlp_energies + atom_energies[:, None], axis=0))
 
     def __call__(
         self,
@@ -416,10 +438,10 @@ class ANI2x(eqx.Module):
         angular_neighbors=None,
         radial_neighbor_idx=None,
         angular_neighbor_idx=None,
-        periodic: bool | None = None,
+        periodic: bool | None = False,
         extra_capacity: int = 0,
     ):
-        periodic = box_vectors is not None if periodic is None else periodic
+        periodic = bool(periodic)
         if radial_neighbor_idx is None:
             radial_neighbors = get_neighbors(
                 positions,
@@ -468,9 +490,10 @@ def save_ani2x_model(path: str | PathLike, model: ANI2x):
         "neighbor_cell_atom_threshold": model.neighbor_cell_atom_threshold,
         "neighbor_cell_capacity_multiplier": model.neighbor_cell_capacity_multiplier,
         "network_sizes": [
-            int(model.layer_weights[0].shape[1]),
-            *(int(weights.shape[2]) for weights in model.layer_weights),
+            int(model.layer_weights[0].shape[2]),
+            *(int(weights.shape[3]) for weights in model.layer_weights),
         ],
+        "num_models": model.num_models,
         "num_species": len(model.species_lookup),
         "num_species_pairs": len(model.pair_lookup),
         "pair_to_index": [list(row) for row in model.pair_to_index],
@@ -498,7 +521,14 @@ def load_ani2x_model(
     if species is not None and atomic_numbers is not None:
         raise ValueError("Pass either species or atomic_numbers, not both.")
 
-    path = _DEFAULT_MODEL_PATH if model_path is None else Path(model_path)
+    if model_path is None:
+        path = (
+            _DEFAULT_ENSEMBLE_MODEL_PATH
+            if _DEFAULT_ENSEMBLE_MODEL_PATH.exists()
+            else _DEFAULT_SINGLE_MODEL_PATH
+        )
+    else:
+        path = Path(model_path)
     with path.open("rb") as handle:
         config = json.loads(handle.readline().decode())
         config = dict(config)

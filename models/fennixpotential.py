@@ -26,7 +26,7 @@ class FeNNixPotentialImplFactory(MLPotentialImplFactory):
         self,
         name: str,
         modelPath: str | None = None,
-        **args,
+        **_args,
     ) -> MLPotentialImpl:
         return FeNNixPotentialImpl(name, modelPath)
 

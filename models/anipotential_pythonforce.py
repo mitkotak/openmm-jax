@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from typing import Iterable, Optional
 
 import jax
@@ -37,9 +36,12 @@ class ANI2xPythonForcePotentialImpl(MLPotentialImpl):
         forceGroup: int,
         modelPath: Optional[str] = None,
         neighbor_cell_atom_threshold: Optional[int] = None,
-        periodic_neighborlist: bool = True,
+        periodic_neighborlist: bool = False,
         **_args,
     ):
+        if periodic_neighborlist:
+            raise ValueError("ANI2x-JAX PythonForce periodic neighbor lists are currently disabled.")
+
         includedAtoms = list(topology.atoms())
         if atoms is not None:
             atoms = list(atoms)
@@ -49,11 +51,6 @@ class ANI2xPythonForcePotentialImpl(MLPotentialImpl):
         )
         indices = None if atoms is None else np.asarray(atoms, dtype=np.int32)
 
-        periodic = (
-            topology.getPeriodicBoxVectors() is not None
-            or system.usesPeriodicBoundaryConditions()
-        )
-        forcePeriodic = periodic and periodic_neighborlist
         model_path = self.modelPath if modelPath is None else modelPath
         model = load_ani2x_model(
             model_path,
@@ -62,44 +59,30 @@ class ANI2xPythonForcePotentialImpl(MLPotentialImpl):
         )
         neighbor_cell_atom_threshold = int(model.neighbor_cell_atom_threshold)
         model_species = jnp.asarray(model.species_to_index, dtype=jnp.int32)[species]
-        allocation_box = None
-        if forcePeriodic:
-            box_vectors = topology.getPeriodicBoxVectors()
-            if box_vectors is None:
-                box_vectors = system.getDefaultPeriodicBoxVectors()
-            allocation_box = jnp.asarray(
-                [vector.value_in_unit(unit.angstrom) for vector in box_vectors],
-                dtype=jnp.float32,
-            )
         radial_neighbor_list = allocate_neighbor_list(
             len(includedAtoms),
-            allocation_box,
             cell_atom_threshold=neighbor_cell_atom_threshold,
             cutoff=float(model.radial_cutoff),
             cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
-            periodic=forcePeriodic,
         )
         angular_neighbor_list = allocate_neighbor_list(
             len(includedAtoms),
-            allocation_box,
             cell_atom_threshold=neighbor_cell_atom_threshold,
             cutoff=float(model.angular_cutoff),
             cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
-            periodic=forcePeriodic,
         )
 
         force = openmm.PythonForce(
             _ComputeANI2xPythonForce(
                 model=model,
                 species=model_species,
-                pbc=forcePeriodic,
                 radial_neighbor_list=radial_neighbor_list,
                 angular_neighbor_list=angular_neighbor_list,
                 indices=indices,
             )
         )
         force.setForceGroup(forceGroup)
-        force.setUsesPeriodicBoundaryConditions(forcePeriodic)
+        force.setUsesPeriodicBoundaryConditions(False)
         system.addForce(force)
 
 
@@ -115,98 +98,56 @@ __all__ = [
 ]
 
 
-def fractional_coordinates(positions, box_vectors):
-    z = positions[..., 2] / box_vectors[2, 2]
-    y = (positions[..., 1] - z * box_vectors[2, 1]) / box_vectors[1, 1]
-    x = (positions[..., 0] - y * box_vectors[1, 0] - z * box_vectors[2, 0]) / box_vectors[0, 0]
-    return jnp.stack((x, y, z), axis=-1)
-
-
-def neighbor_allocation_positions(
-    num_atoms: int,
-    *,
-    dtype=jnp.float32,
-    periodic: bool,
-):
-    if num_atoms <= 0:
-        return jnp.zeros((0, 3), dtype=dtype)
-    if not periodic:
-        return jnp.zeros((num_atoms, 3), dtype=dtype)
-
-    grid_size = max(1, math.ceil(num_atoms ** (1.0 / 3.0)))
-    atom_ids = jnp.arange(num_atoms, dtype=jnp.int32)
-    x = atom_ids % grid_size
-    y = (atom_ids // grid_size) % grid_size
-    z = atom_ids // (grid_size * grid_size)
-    return (jnp.stack((x, y, z), axis=-1).astype(dtype) + 0.5) / grid_size
-
-
 def allocate_neighbor_list(
     num_atoms: int,
-    allocation_box,
     *,
     cell_atom_threshold: int,
     cutoff: float,
     cell_capacity_multiplier: float,
-    periodic: bool,
 ):
-    allocation_positions = neighbor_allocation_positions(
-        num_atoms,
-        dtype=jnp.float32,
-        periodic=periodic,
-    )
+    allocation_positions = jnp.zeros((max(0, num_atoms), 3), dtype=jnp.float32)
     return get_neighbors(
         allocation_positions,
-        allocation_box,
         cell_atom_threshold=cell_atom_threshold,
         cutoff=float(cutoff),
         cell_capacity_multiplier=cell_capacity_multiplier,
-        periodic=periodic,
+        periodic=False,
     )
 
 
 def _energyANI(
-    state,
+    positions_nm,
     model,
     species,
-    pbc: bool,
     radial_neighbor_list,
     angular_neighbor_list,
 ):
     """Evaluate ANI2x energy in kJ/mol from OpenMM positions in nm."""
-    positions_nm, box_vectors_nm = state
     positions = positions_nm * unit.nanometer.conversion_factor_to(unit.angstrom)
-    box_vectors = None
-    if pbc and box_vectors_nm is not None:
-        box_vectors = box_vectors_nm * unit.nanometer.conversion_factor_to(unit.angstrom)
-        positions = fractional_coordinates(positions, box_vectors)
-        positions = positions - jnp.floor(positions)
     radial_neighbors = get_neighbors(
         positions,
-        box_vectors,
         cell_atom_threshold=int(model.neighbor_cell_atom_threshold),
         cutoff=float(model.radial_cutoff),
         cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
-        periodic=pbc,
+        periodic=False,
         neighbors=radial_neighbor_list,
     )
     angular_neighbors = get_neighbors(
         positions,
-        box_vectors,
         cell_atom_threshold=int(model.neighbor_cell_atom_threshold),
         cutoff=float(model.angular_cutoff),
         cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
-        periodic=pbc,
+        periodic=False,
         neighbors=angular_neighbor_list,
     )
     return (
         model(
             positions,
             species,
-            box_vectors=box_vectors,
+            box_vectors=None,
             radial_neighbors=radial_neighbors,
             angular_neighbors=angular_neighbors,
-            periodic=pbc,
+            periodic=False,
         )
         * HARTREE_TO_KJMOL
     )
@@ -218,14 +159,12 @@ class _ComputeANI2xPythonForce:
         *,
         model,
         species,
-        pbc: bool,
         radial_neighbor_list,
         angular_neighbor_list,
         indices,
     ):
         self.model = model
         self.species = species
-        self.pbc = pbc
         self.radial_neighbor_list = radial_neighbor_list
         self.angular_neighbor_list = angular_neighbor_list
         self.indices = None if indices is None else np.asarray(indices, dtype=np.int32)
@@ -234,15 +173,14 @@ class _ComputeANI2xPythonForce:
         )
         self._energy_and_grad = None
 
-    def _energy_kjmol(self, positions_nm, box_vectors_nm):
+    def _energy_kjmol(self, positions_nm):
         selected_positions = (
             positions_nm if self._jax_indices is None else positions_nm[self._jax_indices]
         )
         return _energyANI(
-            (selected_positions, box_vectors_nm),
+            selected_positions,
             model=self.model,
             species=self.species,
-            pbc=self.pbc,
             radial_neighbor_list=self.radial_neighbor_list,
             angular_neighbor_list=self.angular_neighbor_list,
         )
@@ -257,15 +195,6 @@ class _ComputeANI2xPythonForce:
             state.getPositions(asNumpy=True).value_in_unit(unit.nanometer),
             dtype=jnp.float32,
         )
-        box_vectors_nm = None
-        if self.pbc:
-            box_vectors_nm = jnp.asarray(
-                state.getPeriodicBoxVectors(asNumpy=True).value_in_unit(unit.nanometer),
-                dtype=jnp.float32,
-            )
-
-        energy, energy_grad = self._compiled_energy_and_grad()(
-            positions_nm, box_vectors_nm
-        )
+        energy, energy_grad = self._compiled_energy_and_grad()(positions_nm)
         forces = -energy_grad
         return float(jax.device_get(energy)), np.asarray(jax.device_get(forces))
