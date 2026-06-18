@@ -96,7 +96,7 @@ if __name__ == "__main__":
         ],
         packages=["openmmjax_models"],
         package_dir={"": "python", "openmmjax_models": "models"},
-        package_data={"openmmjax_models": ["ani2x_model0.eqx"]},
+        package_data={"openmmjax_models": ["*.eqx"]},
         py_modules=["openmmjax", "openmmjax_export"],
         ext_modules=[make_extension()],
         install_requires=[

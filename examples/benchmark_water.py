@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import argparse
 import importlib
 import time
 from pathlib import Path
 
 from openmm import (
     LangevinMiddleIntegrator,
-    LocalEnergyMinimizer,
     Platform,
     unit,
 )
@@ -16,24 +14,32 @@ from openmmml.mlpotential import MLPotential
 
 WATER_DIR = Path(__file__).with_name("water")
 SIZES = [3, 9, 21, 30, 96, 774, 2661, 6282, 12255, 21384, 98880, 999999]
-CASES = ("fennix-bio1-small-jax", "fennix-bio1-small-python")
-# CASES = ("ani2x-jax-python", "ani2x-jax")
+CASES = ("mace-off-s(23)", "mace-off-m(24)")
+# CASES = ("fennix-bio1-small-jax", "fennix-bio1-small-python")
+# CASES = ("ani2x-jax-model0", "ani2x-jax-ensemble")
+
 CASE_LABELS = {
     "fennix-bio1-small-jax": "FeNNix-S (JaxForce)",
     "fennix-bio1-small-python": "FeNNiX-S (PythonForce)",
     "ani2x-jax": "ANI2x-JAX (JaxForce)",
-    "ani2x-jax-python": "ANI2x-JAX (PythonForce)",
-
+    "ani2x-jax-model0": "ANI2x-JAX model0 (JaxForce)",
+    "ani2x-jax-ensemble": "ANI2x-JAX ensemble (JaxForce)",
+    "ani2x-jax-python": "ANI2x-JAX model 0(PythonForce)",
+    "mace-off-s(23)": "MACE-OFF-S(23) (JaxForce)",
+    "mace-off-m(24)": "MACE-OFF-M(24) (JaxForce)",
 }
 TEMP_K = 400.0
 FRICTION_PER_PS = 1.0
 TIMESTEP_PS = 0.001
-MINIMIZE_STEPS = 50
+
+# Need to skip minimization since it triggers energy+force call which goes OOM on RTX
+MINIMIZE_STEPS = 0
+# MINIMIZE_STEPS = 50
+
 EQUILIBRATION_STEPS = 100
-PRODUCTION_STEPS = 1000
+PRODUCTION_STEPS = 100
 
-
-def setup_simulation(model_name: str, size: int) -> Simulation:
+def setup_simulation(model_name: str, size: int) -> tuple[Simulation, dict[str, object]]:
     pdb = PDBFile(str(WATER_DIR / f"water_atoms_{size}.pdb"))
     topology = pdb.topology
     if model_name == "fennix-bio1-small-jax":
@@ -48,11 +54,12 @@ def setup_simulation(model_name: str, size: int) -> Simulation:
             topology,
             removeCMMotion=False,
         )
-    elif model_name == "ani2x-jax":
+    elif model_name.startswith("ani2x-jax"):
         importlib.import_module("openmmjax_models.anipotential")
-        system = MLPotential("ani2x-jax").createSystem(
+        system = MLPotential(model_name).createSystem(
             topology,
             removeCMMotion=False,
+            periodic_neighborlist=False,
         )
     elif model_name == "ani2x-jax-python":
         importlib.import_module("openmmjax_models.anipotential_pythonforce")
@@ -60,6 +67,13 @@ def setup_simulation(model_name: str, size: int) -> Simulation:
             topology,
             removeCMMotion=False,
         ) 
+    elif model_name.startswith("mace-off-"):
+        importlib.import_module("openmmjax_models.macepotential")
+        system = MLPotential(model_name).createSystem(
+            topology,
+            removeCMMotion=False,
+            periodic_neighborlist=False,
+        )
     else:
         raise ValueError(f"unknown benchmark case: {model_name}")
 
@@ -78,9 +92,11 @@ def setup_simulation(model_name: str, size: int) -> Simulation:
     )
 
     simulation.context.setPositions(pdb.positions)
-    LocalEnergyMinimizer.minimize(simulation.context, maxIterations=MINIMIZE_STEPS)
+    if MINIMIZE_STEPS > 0:
+        simulation.minimizeEnergy(maxIterations=MINIMIZE_STEPS)
     simulation.context.setVelocitiesToTemperature(TEMP_K * unit.kelvin)
     simulation.step(EQUILIBRATION_STEPS)
+    simulation.context.getState(energy=True)
 
     return simulation
 
@@ -102,8 +118,7 @@ def run_simulation(
     time_per_step = elapsed * unit.seconds / PRODUCTION_STEPS
     ns_per_day = (integrator.getStepSize() / time_per_step) / (unit.nanoseconds / unit.day)
     print(
-        f"  {label:28s} {atom_count:>6} atoms: {float(ns_per_day):10.3f} ns/day "
-        f"({PRODUCTION_STEPS} steps in {elapsed:.2f} s)",
+        f"  {label:28s} {atom_count:>6} atoms: {float(ns_per_day):10.3f} ns/day ",
         flush=True,
     )
     return {
@@ -122,22 +137,7 @@ def run_case(model_name: str, size: int) -> None:
     run_simulation(model_name, size, simulation)
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--single-case", choices=CASES)
-    parser.add_argument("--size", type=int)
-    args = parser.parse_args(argv)
-    if (args.single_case is None) != (args.size is None):
-        parser.error("--single-case and --size must be passed together")
-    return args
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-    if args.single_case is not None:
-        run_case(args.single_case, args.size)
-        return 0
-
+def main() -> int:
     print(
         f"timestep={TIMESTEP_PS * 1000:.1f} fs "
         f"temperature={TEMP_K:.1f} K "

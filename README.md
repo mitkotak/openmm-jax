@@ -16,8 +16,11 @@ cmake --build build --target PythonInstall
 
 ## Supported Models
 
-- ANI2x (single)
+Currently supporting inference only
+
+- ANI2x (both single and ensemble)
 - FeNNix
+- MACE-OFF
 
 ## Design Notes
 
