@@ -20,9 +20,8 @@ from openmmjax_export import (
 from openmmml.mlpotential import MLPotential, MLPotentialImpl, MLPotentialImplFactory
 
 from .ani import (
+    ANI2X_MODEL_NAMES,
     HARTREE_TO_KJMOL,
-    _DEFAULT_ENSEMBLE_MODEL_PATH,
-    _DEFAULT_SINGLE_MODEL_PATH,
     get_neighbors,
     load_ani2x_model,
 )
@@ -34,11 +33,6 @@ class ANI2xPotentialImplFactory(MLPotentialImplFactory):
 
 
 class ANI2xPotentialImpl(MLPotentialImpl):
-    MODEL_PATHS = {
-        "ani2x-jax-ensemble": _DEFAULT_ENSEMBLE_MODEL_PATH,
-        "ani2x-jax-model0": _DEFAULT_SINGLE_MODEL_PATH,
-    }
-
     def __init__(self, name, modelPath=None):
         self.name = name
         self.modelPath = modelPath
@@ -70,16 +64,19 @@ class ANI2xPotentialImpl(MLPotentialImpl):
             topology.getPeriodicBoxVectors() is not None or system.usesPeriodicBoundaryConditions()
         )
         forcePeriodic = periodic and periodic_neighborlist
-        model_path = modelPath if modelPath is not None else self.modelPath
-        if model_path is None:
-            model_path = self.MODEL_PATHS.get(self.name)
+        model_ref = modelPath if modelPath is not None else self.modelPath
+        if model_ref is None:
+            if self.name in ANI2X_MODEL_NAMES:
+                model_ref = self.name
+            else:
+                raise ValueError("modelPath must be provided for custom ANI2x models")
         model = load_ani2x_model(
-            model_path,
+            model_ref,
             atomic_numbers=species,
             neighbor_cell_atom_threshold=neighbor_cell_atom_threshold,
         )
         neighbor_cell_atom_threshold = int(model.neighbor_cell_atom_threshold)
-        model_species = jnp.asarray(model.species_to_index, dtype=jnp.int32)[species]
+        model_species = model.species_indices(species)
         allocation_box = None
         if forcePeriodic:
             box_vectors = topology.getPeriodicBoxVectors()
@@ -146,11 +143,7 @@ class ANI2xPotentialImpl(MLPotentialImpl):
         force.addToSystem(system)
 
 
-for model_name in (
-    "ani2x-jax",
-    "ani2x-jax-ensemble",
-    "ani2x-jax-model0",
-):
+for model_name in ANI2X_MODEL_NAMES:
     MLPotential.registerImplFactory(model_name, ANI2xPotentialImplFactory())
 
 __all__ = [

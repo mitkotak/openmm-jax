@@ -13,30 +13,34 @@ from openmm.app import PDBFile, Simulation
 from openmmml.mlpotential import MLPotential
 
 WATER_DIR = Path(__file__).with_name("water")
-SIZES = [3, 9, 21, 30, 96, 774, 2661, 6282, 12255, 21384, 98880, 999999]
-CASES = ("mace-off-s(23)", "mace-off-m(24)")
-# CASES = ("fennix-bio1-small-jax", "fennix-bio1-small-python")
+# SIZES = [3, 9, 21, 30, 96, 774, 2661, 6282, 12255, 21384, 98880, 999999]
+# CASES = ("mace-off-s(23)", "mace-off-s(23)-python", "mace-off-m(24)", "mace-off-m(24)-python")
+SIZES = [774,]
+CASES = ("fennix-bio1-small-jax-python", "fennix-bio1-small-jax")
 # CASES = ("ani2x-jax-model0", "ani2x-jax-ensemble")
 
 CASE_LABELS = {
     "fennix-bio1-small-jax": "FeNNix-S (JaxForce)",
-    "fennix-bio1-small-python": "FeNNiX-S (PythonForce)",
+    "fennix-bio1-small-jax-python": "FeNNiX-S (PythonForce)",
     "ani2x-jax": "ANI2x-JAX (JaxForce)",
     "ani2x-jax-model0": "ANI2x-JAX model0 (JaxForce)",
     "ani2x-jax-ensemble": "ANI2x-JAX ensemble (JaxForce)",
-    "ani2x-jax-python": "ANI2x-JAX model 0(PythonForce)",
-    "mace-off-s(23)": "MACE-OFF-S(23) (JaxForce)",
-    "mace-off-m(24)": "MACE-OFF-M(24) (JaxForce)",
+    "ani2x-jax-python": "ANI2x-JAX model0 (PythonForce)",
+    "mace-off-s(23)": "MACE-JAX-OFF-S(23) (JaxForce)",
+    "mace-off-m(24)": "MACE-JAX-OFF-M(24) (JaxForce)",
+    "mace-off-s(23)-python": "MACE-JAX-OFF-S(23) (PythonForce)",
+     "mace-off-m(24)-python": "MACE-JAX-OFF-M(24) (PythonForce)",
 }
 TEMP_K = 400.0
 FRICTION_PER_PS = 1.0
 TIMESTEP_PS = 0.001
 
 # Need to skip minimization since it triggers energy+force call which goes OOM on RTX
-MINIMIZE_STEPS = 0
-# MINIMIZE_STEPS = 50
+# MINIMIZE_STEPS = 0
+MINIMIZE_STEPS = 50
 
 EQUILIBRATION_STEPS = 100
+WARMUP_STEPS = 10
 PRODUCTION_STEPS = 100
 
 def setup_simulation(model_name: str, size: int) -> tuple[Simulation, dict[str, object]]:
@@ -48,9 +52,9 @@ def setup_simulation(model_name: str, size: int) -> tuple[Simulation, dict[str, 
             topology,
             removeCMMotion=False,
         )
-    elif model_name == "fennix-bio1-small-python":
-        importlib.import_module("openmmml.models.fennixpotential")
-        system = MLPotential("fennix-bio1-small").createSystem(
+    elif model_name == "fennix-bio1-small-jax-python":
+        importlib.import_module("openmmjax_models.fennixpotential_pythonforce")
+        system = MLPotential("fennix-bio1-small-python").createSystem(
             topology,
             removeCMMotion=False,
         )
@@ -66,9 +70,16 @@ def setup_simulation(model_name: str, size: int) -> tuple[Simulation, dict[str, 
         system = MLPotential("ani2x-jax-python").createSystem(
             topology,
             removeCMMotion=False,
-        ) 
-    elif model_name.startswith("mace-off-"):
+        )
+    elif model_name.startswith("mace-off-") and not model_name.endswith("-python"):
         importlib.import_module("openmmjax_models.macepotential")
+        system = MLPotential(model_name).createSystem(
+            topology,
+            removeCMMotion=False,
+            periodic_neighborlist=False,
+        )
+    elif model_name.startswith("mace-off-") and model_name.endswith("-python"):
+        importlib.import_module("openmmjax_models.macepotential_pythonforce")
         system = MLPotential(model_name).createSystem(
             topology,
             removeCMMotion=False,

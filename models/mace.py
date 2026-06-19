@@ -1,3 +1,7 @@
+# Credit to https://github.com/atomicarchitects/nequix/blob/da0fb241f417dad1afafa4e723ad867667ee7445/nequix/model.py#L385-L386
+# for the basis functions
+# Credit to https://github.com/abhijeetgangan/mace-eqx/blob/main/mace_eqx/mace.py for the overall design
+
 from __future__ import annotations
 
 import json
@@ -352,12 +356,17 @@ class FullMACELayer(eqx.Module):
     def __call__(self, h0: Array, h1: Array | None, species: Array, y: Array, radial: Array, senders: Array, edge_mask: Array) -> tuple[Array, Array | None, Array]:
         skip = self.skip0(h0, species) if self.skip0 is not None else None
         h0u = self.linear_up0(h0)
+        
+        # Tensor Product
         if self.vector_input:
             assert h1 is not None
             h1u = self.linear_up1(h1)
             msg = self._messages_vector_input(h0u[senders], h1u[senders], y)
         else:
             msg = self._messages_scalar_input(h0u[senders], y)
+        
+
+        # Multiply the lmax-3 message with the radial weight
         mix = self.radial_mlp(radial)
         pieces = jnp.split(mix, np.cumsum(self.conv_widths)[:-1], axis=-1)
         blocks = []
@@ -367,20 +376,27 @@ class FullMACELayer(eqx.Module):
             agg = jnp.sum(weighted, axis=1)
             down = self.linear_down[l](agg)
             blocks.append(down)
+    
         if self.linz is not None:
             blocks = [self.linz[l](blocks[l], species) for l in range(4)]
+    
         out0, out1 = self.sc(tuple(blocks), species)
+
         out0 = self.linear_sc0(out0)
+
         if self.vector_output:
             assert out1 is not None
             out1 = self.linear_sc1(out1)
         if skip is not None:
             out0 = out0 + skip
+
         layer_out = out0
         if self.is_last:
             assert self.readout_mlp is not None
             layer_out = normalized_silu(self.readout_mlp(layer_out), self.silu_normalization)
+
         e = jnp.squeeze(self.readout(layer_out), axis=-1)
+
         return out0, out1, e
 
 
@@ -469,7 +485,6 @@ class MACEModel(eqx.Module):
         h0 = self.embedding[species] / jnp.sqrt(self.num_species)
         h1 = None
         distances = safe_norm(edge_vectors, axis=-1)
-        # Borrowed from https://github.com/atomicarchitects/nequix/blob/da0fb241f417dad1afafa4e723ad867667ee7445/nequix/model.py#L385-L386
         radial_basis = bessel_basis(distances, self.cutoff, self.num_radial_basis) * polynomial_cutoff(
             distances,
             self.cutoff,

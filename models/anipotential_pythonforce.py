@@ -13,6 +13,7 @@ from openmm import unit
 from openmmml.mlpotential import MLPotential, MLPotentialImpl, MLPotentialImplFactory
 
 from .ani import (
+    ANI2X_MODEL_NAMES,
     HARTREE_TO_KJMOL,
     get_neighbors,
     load_ani2x_model,
@@ -25,7 +26,8 @@ class ANI2xPythonForcePotentialImplFactory(MLPotentialImplFactory):
 
 
 class ANI2xPythonForcePotentialImpl(MLPotentialImpl):
-    def __init__(self, _name, modelPath=None):
+    def __init__(self, name, modelPath=None):
+        self.name = name
         self.modelPath = modelPath
 
     def addForces(
@@ -51,14 +53,19 @@ class ANI2xPythonForcePotentialImpl(MLPotentialImpl):
         )
         indices = None if atoms is None else np.asarray(atoms, dtype=np.int32)
 
-        model_path = self.modelPath if modelPath is None else modelPath
+        model_ref = self.modelPath if modelPath is None else modelPath
+        if model_ref is None:
+            if self.name in ANI2X_MODEL_NAMES:
+                model_ref = self.name
+            else:
+                model_ref = "ani2x-jax-model0"
         model = load_ani2x_model(
-            model_path,
+            model_ref,
             atomic_numbers=species,
             neighbor_cell_atom_threshold=neighbor_cell_atom_threshold,
         )
         neighbor_cell_atom_threshold = int(model.neighbor_cell_atom_threshold)
-        model_species = jnp.asarray(model.species_to_index, dtype=jnp.int32)[species]
+        model_species = model.species_indices(species)
         radial_neighbor_list = allocate_neighbor_list(
             len(includedAtoms),
             cell_atom_threshold=neighbor_cell_atom_threshold,

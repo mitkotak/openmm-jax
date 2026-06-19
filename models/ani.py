@@ -14,6 +14,12 @@ jax.config.update("jax_default_matmul_precision", "highest")
 
 _DEFAULT_ENSEMBLE_MODEL_PATH = Path(__file__).resolve().with_name("ani2x_ensemble.eqx")
 _DEFAULT_SINGLE_MODEL_PATH = Path(__file__).resolve().with_name("ani2x_model0.eqx")
+ANI2X_MODEL_PATHS = {
+    "ani2x-jax": _DEFAULT_ENSEMBLE_MODEL_PATH,
+    "ani2x-jax-ensemble": _DEFAULT_ENSEMBLE_MODEL_PATH,
+    "ani2x-jax-model0": _DEFAULT_SINGLE_MODEL_PATH,
+}
+ANI2X_MODEL_NAMES = tuple(ANI2X_MODEL_PATHS)
 HARTREE_TO_KJMOL = 2625.5002
 
 
@@ -103,7 +109,7 @@ class _ANI2xCheckpoint(eqx.Module):
 
     def __init__(self, config: dict):
         num_species = config["num_species"]
-        num_models = config.get("num_models")
+        num_models = config["num_models"]
         network_sizes = tuple(config["network_sizes"])
 
         self.atom_energies = jnp.zeros(num_species, dtype=jnp.float32)
@@ -112,18 +118,12 @@ class _ANI2xCheckpoint(eqx.Module):
         for layer_index in range(len(network_sizes) - 1):
             d_in = network_sizes[layer_index]
             d_out = network_sizes[layer_index + 1]
-            if num_models is None:
-                self.layer_weights.append(
-                    jnp.zeros((num_species, d_in, d_out), dtype=jnp.float32)
-                )
-                self.layer_biases.append(jnp.zeros((num_species, d_out), dtype=jnp.float32))
-            else:
-                self.layer_weights.append(
-                    jnp.zeros((num_models, num_species, d_in, d_out), dtype=jnp.float32)
-                )
-                self.layer_biases.append(
-                    jnp.zeros((num_models, num_species, d_out), dtype=jnp.float32)
-                )
+            self.layer_weights.append(
+                jnp.zeros((num_models, num_species, d_in, d_out), dtype=jnp.float32)
+            )
+            self.layer_biases.append(
+                jnp.zeros((num_models, num_species, d_out), dtype=jnp.float32)
+            )
 
 
 def _active_pair_ids(
@@ -206,7 +206,7 @@ class ANI2x(eqx.Module):
         *,
         config: dict,
         checkpoint: _ANI2xCheckpoint,
-        species=None,
+        active_species: tuple[int, ...] | None = None,
     ):
         self.neighbor_cell_atom_threshold = config["neighbor_cell_atom_threshold"]
         self.neighbor_cell_capacity_multiplier = config["neighbor_cell_capacity_multiplier"]
@@ -224,14 +224,12 @@ class ANI2x(eqx.Module):
         self.pair_to_index = tuple(tuple(row) for row in config["pair_to_index"])
         num_species = config["num_species"]
         num_species_pairs = config["num_species_pairs"]
-        self.num_models = int(config.get("num_models", 1))
+        self.num_models = int(config["num_models"])
         self.angular_basis_width = config["angular_basis_width"]
 
-        if species is None:
+        if active_species is None:
             active_species = tuple(range(num_species))
         else:
-            species_np = np.asarray(jax.device_get(species), dtype=np.int32)
-            active_species = tuple(int(x) for x in sorted(set(species_np.tolist())))
             if not active_species:
                 raise ValueError("ANI active species cannot be empty.")
             invalid = [x for x in active_species if x < 0 or x >= num_species]
@@ -262,20 +260,19 @@ class ANI2x(eqx.Module):
         layer_weights = []
         layer_biases = []
         for layer_index, checkpoint_weights in enumerate(checkpoint.layer_weights):
-            if checkpoint_weights.ndim == 3:
-                weights = checkpoint_weights[active_species_idx][None, ...]
-            else:
-                weights = checkpoint_weights[:, active_species_idx]
+            weights = checkpoint_weights[:, active_species_idx]
             if layer_index == 0:
                 weights = weights[:, :, first_layer_cols, :]
             layer_weights.append(weights)
             checkpoint_biases = checkpoint.layer_biases[layer_index]
-            if checkpoint_biases.ndim == 2:
-                layer_biases.append(checkpoint_biases[active_species_idx][None, ...])
-            else:
-                layer_biases.append(checkpoint_biases[:, active_species_idx])
+            layer_biases.append(checkpoint_biases[:, active_species_idx])
         self.layer_weights = layer_weights
         self.layer_biases = layer_biases
+
+    def species_indices(self, atomic_numbers) -> jnp.ndarray:
+        return jnp.asarray(self.species_to_index, dtype=jnp.int32)[
+            jnp.asarray(atomic_numbers, dtype=jnp.int32)
+        ]
 
     def node_energies(
         self,
@@ -510,40 +507,41 @@ def save_ani2x_model(path: str | PathLike, model: ANI2x):
 
 
 def load_ani2x_model(
-    model_path: str | PathLike | None = None,
+    model: str | PathLike = "ani2x-jax-ensemble",
     *,
-    species=None,
     atomic_numbers=None,
+    model_path: str | PathLike | None = None,
     neighbor_cell_atom_threshold: int | None = None,
 ) -> ANI2x:
-    """Load an ANI-2x checkpoint, optionally specialized to a fixed species set."""
+    """Load an ANI-2x checkpoint, optionally specialized to a fixed atomic-number set."""
 
-    if species is not None and atomic_numbers is not None:
-        raise ValueError("Pass either species or atomic_numbers, not both.")
-
-    if model_path is None:
-        path = (
-            _DEFAULT_ENSEMBLE_MODEL_PATH
-            if _DEFAULT_ENSEMBLE_MODEL_PATH.exists()
-            else _DEFAULT_SINGLE_MODEL_PATH
-        )
-    else:
+    if model_path is not None:
         path = Path(model_path)
+    elif isinstance(model, PathLike):
+        path = Path(model)
+    elif model in ANI2X_MODEL_PATHS:
+        path = ANI2X_MODEL_PATHS[model]
+    else:
+        path = Path(model)
+    if not path.is_file():
+        raise FileNotFoundError(f"ANI2x .eqx checkpoint not found: {path}")
+
     with path.open("rb") as handle:
         config = json.loads(handle.readline().decode())
         config = dict(config)
         if neighbor_cell_atom_threshold is not None:
             config["neighbor_cell_atom_threshold"] = int(neighbor_cell_atom_threshold)
-        species = (
-            jnp.asarray(config["species_to_index"], dtype=jnp.int32)[
+        active_species = None
+        if atomic_numbers is not None:
+            species = jnp.asarray(config["species_to_index"], dtype=jnp.int32)[
                 jnp.asarray(atomic_numbers, dtype=jnp.int32)
             ]
-            if atomic_numbers is not None
-            else species
-        )
+            active_species = tuple(
+                int(x) for x in sorted(set(np.asarray(jax.device_get(species)).tolist()))
+            )
         # Need to first load the whole model and then prune out weights for other species
         return ANI2x(
             config=config,
             checkpoint=eqx.tree_deserialise_leaves(handle, _ANI2xCheckpoint(config)),
-            species=species,
+            active_species=active_species,
         )
