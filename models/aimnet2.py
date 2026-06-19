@@ -392,8 +392,15 @@ def _simple_coulomb_all_pairs(
     return jnp.sum(jnp.where(pair_mask, pair_energy, 0.0).astype(jnp.float64))
 
 
-def aimnet2_message_passing(model, species, local_env, total_charge):
-    _r_ij, unit_vectors, g_ijs, neighbors, edge_mask = local_env
+def aimnet2_message_passing(
+    model,
+    species,
+    unit_vectors,
+    g_ijs,
+    neighbors,
+    edge_mask,
+    total_charge,
+):
     num_atoms = species.shape[0]
     nfeature, nshifts, ncharge = model.nfeature, model.nshifts, model.ncharge
 
@@ -451,9 +458,15 @@ def aimnet2_message_passing(model, species, local_env, total_charge):
 
 
 def aimnet2_coulomb_energy(
-    model, partial_charges, positions, local_env, lr_neighbor_idx, box_vectors
+    model,
+    partial_charges,
+    positions,
+    r_ij,
+    neighbors,
+    edge_mask,
+    lr_neighbor_idx,
+    box_vectors,
 ):
-    r_ij, _unit_vectors, _g_ijs, neighbors, edge_mask = local_env
     partial_charges = partial_charges.squeeze(-1)
     local_coulomb = _short_range_coulomb_dense(
         partial_charges,
@@ -598,7 +611,7 @@ class AIMNet2Model(eqx.Module):
         neighbor_idx: Array,
         total_charge: Array | float = 0.0,
         box_vectors: Array | None = None,
-    ) -> tuple[Array, Array, tuple[Array, Array, Array, Array, Array]]:
+    ) -> tuple[Array, Array, Array, Array, Array]:
         """Return local node energies plus intermediates needed by global terms."""
 
         species = jnp.asarray(species, dtype=jnp.int32)
@@ -612,14 +625,19 @@ class AIMNet2Model(eqx.Module):
         unit_vectors = local_vectors / jnp.maximum(r_ij[..., None], 1.0e-8)
         g_ijs = radial_symmetry_functions(r_ij, self.shifts, self.eta, self.cutoff)
         g_ijs = jnp.where(edge_mask[..., None], g_ijs, 0.0)
-        local_env = (r_ij, unit_vectors, g_ijs, neighbors, edge_mask)
         aim_vectors, partial_charges = aimnet2_message_passing(
-            self, species, local_env, total_charge
+            self,
+            species,
+            unit_vectors,
+            g_ijs,
+            neighbors,
+            edge_mask,
+            total_charge,
         )
 
         atom_local_energy = self.energy_mlp(aim_vectors, last_linear=True).squeeze(-1)
         node_energies = atom_local_energy.astype(jnp.float64) + self.atomic_shifts[species]
-        return node_energies, partial_charges, local_env
+        return node_energies, partial_charges, r_ij, neighbors, edge_mask
 
     def __call__(
         self,
@@ -663,16 +681,23 @@ class AIMNet2Model(eqx.Module):
             lr_neighbor_idx = lr_neighbors.idx
 
         box_vectors = box_vectors if periodic else None
-        node_energies, partial_charges, local_env = self.node_energies_and_charges(
-            positions,
-            species,
-            neighbor_idx=neighbor_idx,
-            total_charge=total_charge,
-            box_vectors=box_vectors,
-        )
+        node_energies, partial_charges, r_ij, neighbors, edge_mask = self.node_energies_and_charges(
+                                                                    positions,
+                                                                    species,
+                                                                    neighbor_idx=neighbor_idx,
+                                                                    total_charge=total_charge,
+                                                                    box_vectors=box_vectors,
+                                                                )
         local_energy = jnp.sum(node_energies)
         coulomb_energy = aimnet2_coulomb_energy(
-            self, partial_charges, positions, local_env, lr_neighbor_idx, box_vectors
+            self,
+            partial_charges,
+            positions,
+            r_ij,
+            neighbors,
+            edge_mask,
+            lr_neighbor_idx,
+            box_vectors,
         )
         dispersion_energy = d3bj_energy_neighbors(
             positions,

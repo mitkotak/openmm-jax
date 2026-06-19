@@ -20,7 +20,7 @@ from openmmml.mlpotential import MLPotential
 INPUT_PDB = Path(__file__).with_name("phenol.pdb")
 PHENOL_SMILES = "c1ccccc1O"
 SMALL_MOLECULE_FORCEFIELD = "gaff-2.2.20"
-CASES = ("mm", "aimnet2-jax", "aimnet2-jax-python")
+CASES = ("mm", "aimnet2-jax-python", "aimnet2-jax")
 CASE_LABELS = {
     "mm": "GAFF/TIP3P",
     "ani2x-jax-model0": "ANI2x-JAX model0",
@@ -41,7 +41,7 @@ CASE_COLORS = {
     "FeNNix-S (PythonForce)": "#f5a623",
     "MACE-OFF-S(23) (JaxForce)": "#7a52cc",
     "MACE-OFF-M(24) (JaxForce)": "#00bfa5",
-    
+
 }
 PLATFORM = "CUDA"
 TEMP_K = 300.0
@@ -206,8 +206,18 @@ def run_simulation(
             removeConstraints=True,
             periodic_neighborlist=False,
         )
-    elif model_name.startswith("aimnet2-jax"):
+    elif model_name == "aimnet2-jax":
         importlib.import_module("openmmjax_models.aimnet2potential")
+        cloned = openmm.XmlSerializer.deserialize(openmm.XmlSerializer.serialize(mm_system))
+        system = MLPotential(model_name).createMixedSystem(
+            topology,
+            cloned,
+            ml_atoms,
+            removeConstraints=True,
+            periodic_neighborlist=False,
+        )
+    elif model_name == "aimnet2-jax-python":
+        importlib.import_module("openmmjax_models.aimnet2potential_pythonforce")
         cloned = openmm.XmlSerializer.deserialize(openmm.XmlSerializer.serialize(mm_system))
         system = MLPotential(model_name).createMixedSystem(
             topology,
