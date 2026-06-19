@@ -38,6 +38,7 @@ class FeNNixPotentialImplFactory(MLPotentialImplFactory):
     """This is the factory that creates FeNNixPotentialImpl objects."""
 
     def createImpl(self, name: str, modelPath: str | None = None, **args) -> MLPotentialImpl:
+        name = _base_model_name(name)
         return FeNNixPotentialImpl(name, modelPath)
 
 class FeNNixPotentialImpl(MLPotentialImpl):
@@ -97,7 +98,6 @@ class FeNNixPotentialImpl(MLPotentialImpl):
             import fennol
         except ImportError:
             raise ImportError("Failed to import FeNNol: for installation instructions, visit https://github.com/FeNNol-tools/FeNNol")
-        import jax
         import jax.numpy as jnp
         import numpy as np
 
@@ -110,20 +110,19 @@ class FeNNixPotentialImpl(MLPotentialImpl):
             raise ValueError(f"Invalid precision {precision} (expected single or double)")
 
         # Download or look up the model file to use.
-        baseName = _base_model_name(self.name)
-        if baseName in FeNNixPotentialImpl.KNOWN_MODELS:
-            url, warn = FeNNixPotentialImpl.KNOWN_MODELS[baseName]
+        if self.name in FeNNixPotentialImpl.KNOWN_MODELS:
+            url, warn = FeNNixPotentialImpl.KNOWN_MODELS[self.name]
             if warn:
                 import logging
-                logging.warning(f"The model {baseName} is distributed under the restrictive ASL license.  Commercial use is not permitted.")
-            modelPath = self._downloadOrFindFile(f"{baseName}.fnx", url)
-        elif baseName == "fennix":
+                logging.warning(f"The model {self.name} is distributed under the restrictive ASL license.  Commercial use is not permitted.")
+            modelPath = self._downloadOrFindFile(f"{self.name}.fnx", url)
+        elif self.name == "fennix":
             if self.modelPath is None:
                 raise ValueError("No modelPath provided for local FeNNix model.")
             modelPath = self.modelPath
         else:
             supported_options = ", ".join(list(FeNNixPotentialImpl.KNOWN_MODELS) + ["fennix"])
-            raise ValueError(f"Unsupported FeNNix model: {baseName} (options are {supported_options})")
+            raise ValueError(f"Unsupported FeNNix model: {self.name} (options are {supported_options})")
 
         # Load the model.
         model = fennol.FENNIX.load(modelPath, **args)
@@ -146,116 +145,44 @@ class FeNNixPotentialImpl(MLPotentialImpl):
             total_charge=charge,
         )
 
-        periodic = (topology.getPeriodicBoxVectors() is not None) or system.usesPeriodicBoundaryConditions()
-        dtype = np.float64 if useDouble else np.float32
-        staticInputs = {
-            key: np.asarray(value) if isinstance(value, jax.Array) else value
-            for key, value in inputs.items()
-        }
-        preprocInputs = {
-            **staticInputs,
-            "coordinates": np.zeros((species.size, 3), dtype=dtype),
-        }
-        if periodic:
-            boxVectors = topology.getPeriodicBoxVectors()
-            if boxVectors is None:
-                boxVectors = system.getDefaultPeriodicBoxVectors()
-            cells = np.asarray(
-                [vector.value_in_unit(unit.angstrom) for vector in boxVectors],
-                dtype=dtype,
-            ).reshape(1, 3, 3)
-            preprocInputs["cells"] = cells
-            preprocInputs["reciprocal_cells"] = np.linalg.inv(cells)
-        preprocState, _ = model.preprocessing.init_with_output(preprocInputs)
-
         # Create the PythonForce and add it to the System.
-        force = openmm.PythonForce(
-            _ComputeFeNNix(
-                model,
-                energyScale,
-                forceScale,
-                indices,
-                staticInputs,
-                preprocState,
-                periodic,
-                useDouble,
-            )
-        )
+        periodic = (topology.getPeriodicBoxVectors() is not None) or system.usesPeriodicBoundaryConditions()
+        force = openmm.PythonForce(_ComputeFeNNix(model, energyScale, forceScale, indices, inputs, periodic, useDouble))
         force.setForceGroup(forceGroup)
         force.setUsesPeriodicBoundaryConditions(periodic)
         system.addForce(force)
 
 class _ComputeFeNNix:
-    def __init__(
-        self,
-        model,
-        energyScale,
-        forceScale,
-        indices,
-        staticInputs,
-        preprocState,
-        periodic,
-        useDouble,
-    ):
+    def __init__(self, model, energyScale, forceScale, indices, inputs, periodic, useDouble):
         self.model = model
         self.energyScale = energyScale
         self.forceScale = forceScale
         self.indices = indices
-        self.staticInputs = staticInputs
-        self.preprocState = preprocState
+        self.inputs = inputs
         self.periodic = periodic
         self.useDouble = useDouble
-        self._buildCompute()
-
-    def _buildCompute(self):
-        import jax
-        import jax.numpy as jnp
-
-        if self.periodic:
-            def energyAndForces(positionsNm, boxVectorsNm):
-                cellsAng = boxVectorsNm * unit.nanometer.conversion_factor_to(unit.angstrom)
-                cellsAng = cellsAng.reshape(1, 3, 3)
-                preprocIn = {
-                    **self.staticInputs,
-                    "coordinates": positionsNm * unit.nanometer.conversion_factor_to(unit.angstrom),
-                    "cells": cellsAng,
-                    "reciprocal_cells": jnp.linalg.inv(cellsAng),
-                }
-                processed = self.model.preprocessing.process(self.preprocState, preprocIn)
-                energy, forces, _ = self.model._energy_and_forces(self.model.variables, processed)
-                return energy.squeeze() * self.energyScale, forces * self.forceScale
-        else:
-            def energyAndForces(positionsNm):
-                preprocIn = {
-                    **self.staticInputs,
-                    "coordinates": positionsNm * unit.nanometer.conversion_factor_to(unit.angstrom),
-                }
-                processed = self.model.preprocessing.process(self.preprocState, preprocIn)
-                energy, forces, _ = self.model._energy_and_forces(self.model.variables, processed)
-                return energy.squeeze() * self.energyScale, forces * self.forceScale
-
-        self._compute = jax.jit(energyAndForces)
 
     def __call__(self, state):
         import jax
         import numpy as np
 
         # Load coordinates and box vectors from the state.
-        dtype = np.float64 if self.useDouble else np.float32
-        positions = state.getPositions(asNumpy=True).value_in_unit(unit.nanometer).astype(dtype)
+        positions = state.getPositions(asNumpy=True).value_in_unit(unit.angstrom)
         numAtoms = positions.shape[0]
         if self.indices is not None:
             positions = positions[self.indices]
         if self.periodic:
-            boxVectors = state.getPeriodicBoxVectors(asNumpy=True).value_in_unit(unit.nanometer).astype(dtype)
+            cells = state.getPeriodicBoxVectors(asNumpy=True).value_in_unit(unit.angstrom).reshape(1, 3, 3)
 
         # Invoke the model to get the energy and forces.
         with jax.enable_x64(self.useDouble):
             if self.periodic:
-                jaxEnergy, jaxForces = self._compute(positions, boxVectors)
+                modelOutputs = self.model.energy_and_forces(coordinates=positions, cells=cells, gpu_preprocessing=True, **self.inputs)
             else:
-                jaxEnergy, jaxForces = self._compute(positions)
-            energy = jaxEnergy.item()
+                modelOutputs = self.model.energy_and_forces(coordinates=positions, gpu_preprocessing=True, **self.inputs)
+            jaxEnergy, jaxForces = modelOutputs[:2]
+            energy = jaxEnergy.item() * self.energyScale
+            jaxForces *= self.forceScale
             if self.indices is None:
                 forces = np.asarray(jaxForces)
             else:
@@ -265,42 +192,32 @@ class _ComputeFeNNix:
         return energy, forces
 
     def __getstate__(self):
-        return (
-            self.model.to_dict(),
-            self.energyScale,
-            self.forceScale,
-            self.indices,
-            self.staticInputs,
-            self.preprocState,
-            self.periodic,
-            self.useDouble,
-        )
+        return (self.model.to_dict(), self.energyScale, self.forceScale, self.indices, self.inputs, self.periodic, self.useDouble)
 
     def __setstate__(self, pickle_state):
         import fennol
-        (
-            model_dict,
-            self.energyScale,
-            self.forceScale,
-            self.indices,
-            self.staticInputs,
-            self.preprocState,
-            self.periodic,
-            self.useDouble,
-        ) = pickle_state
+        model_dict, self.energyScale, self.forceScale, self.indices, self.inputs, self.periodic, self.useDouble = pickle_state
         self.model = fennol.FENNIX(**model_dict)
-        self._buildCompute()
+
+
+for model_name in FeNNixPotentialImpl.KNOWN_MODELS:
+    MLPotential.registerImplFactory(model_name, FeNNixPotentialImplFactory())
+    MLPotential.registerImplFactory(f"{model_name}-python", FeNNixPotentialImplFactory())
+    MLPotential.registerImplFactory(f"{model_name}-pythonforce", FeNNixPotentialImplFactory())
+    MLPotential.registerImplFactory(f"{model_name}-jax-python", FeNNixPotentialImplFactory())
+MLPotential.registerImplFactory("fennix", FeNNixPotentialImplFactory())
+MLPotential.registerImplFactory("fennix-python", FeNNixPotentialImplFactory())
+MLPotential.registerImplFactory("fennix-pythonforce", FeNNixPotentialImplFactory())
 
 
 def _base_model_name(name: str) -> str:
-    for suffix in ("-pythonforce", "-python"):
+    for suffix in ("-jax-python", "-pythonforce", "-python"):
         if name.endswith(suffix):
             return name[: -len(suffix)]
     return name
 
-
-for modelName in FeNNixPotentialImpl.KNOWN_MODELS:
-    MLPotential.registerImplFactory(f"{modelName}-pythonforce", FeNNixPotentialImplFactory())
-    MLPotential.registerImplFactory(f"{modelName}-python", FeNNixPotentialImplFactory())
-MLPotential.registerImplFactory("fennix-pythonforce", FeNNixPotentialImplFactory())
-MLPotential.registerImplFactory("fennix-python", FeNNixPotentialImplFactory())
+__all__ = [
+    "MLPotential",
+    "FeNNixPotentialImplFactory",
+    "FeNNixPotentialImpl",
+]

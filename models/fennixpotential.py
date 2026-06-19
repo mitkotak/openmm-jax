@@ -67,6 +67,9 @@ class FeNNixPotentialImpl(MLPotentialImpl):
         matmul_prec: Optional[str] = "highest",
         energy_terms: Optional[Sequence[str]] = None,
         periodic_neighborlist: bool = True,
+        minimum_image: bool = True,
+        preprocessing_positions=None,
+        preprocessing_positions_unit=unit.nanometer,
         **args,
     ):
         import fennol
@@ -109,7 +112,12 @@ class FeNNixPotentialImpl(MLPotentialImpl):
         species = jnp.array(
             [atom.element.atomic_number for atom in includedAtoms], dtype=jnp.int32
         )
-        indices = None if atoms is None else jnp.array(atoms, dtype=jnp.int32)
+        atom_indices_np = None if atoms is None else np.array(atoms, dtype=np.int32)
+        indices = (
+            None
+            if atom_indices_np is None
+            else jnp.array(atom_indices_np, dtype=jnp.int32)
+        )
         numSystemAtoms = system.getNumParticles()
 
         inputs = dict(
@@ -123,6 +131,8 @@ class FeNNixPotentialImpl(MLPotentialImpl):
             topology.getPeriodicBoxVectors() is not None or system.usesPeriodicBoundaryConditions()
         )
         forcePeriodic = periodic and periodic_neighborlist
+        if forcePeriodic and minimum_image:
+            inputs["flags"] = {"minimum_image": None}
         dtype = np.float32
 
         # Prepare static inputs and initialize preprocessing state on CPU
@@ -130,10 +140,15 @@ class FeNNixPotentialImpl(MLPotentialImpl):
             key: np.asarray(value) if isinstance(value, jax.Array) else value
             for key, value in inputs.items()
         }
-        preprocInputs = {
-            **staticInputs,
-            "coordinates": np.zeros((species.size, 3), dtype=dtype),
-        }
+        preproc_coordinates = _initial_preprocessing_coordinates_angstrom(
+            preprocessing_positions,
+            dtype=dtype,
+            indices=atom_indices_np,
+            system_shape=(numSystemAtoms, 3),
+            fallback_shape=(species.size, 3),
+            positions_unit=preprocessing_positions_unit,
+        )
+        preprocInputs = {**staticInputs, "coordinates": preproc_coordinates}
         if forcePeriodic:
             box_vectors = topology.getPeriodicBoxVectors()
             if box_vectors is None:
@@ -209,6 +224,43 @@ __all__ = [
     "FeNNixPotentialImplFactory",
     "FeNNixPotentialImpl",
 ]
+
+
+def _initial_preprocessing_coordinates_angstrom(
+    positions,
+    *,
+    dtype,
+    indices,
+    system_shape: tuple[int, int],
+    fallback_shape: tuple[int, int],
+    positions_unit,
+):
+    import numpy as np
+
+    if positions is None:
+        return np.zeros(fallback_shape, dtype=dtype)
+
+    if hasattr(positions, "value_in_unit"):
+        coordinates = np.asarray(positions.value_in_unit(unit.angstrom), dtype=dtype)
+    else:
+        coordinates = np.asarray(positions, dtype=dtype)
+        coordinates *= positions_unit.conversion_factor_to(unit.angstrom)
+
+    if coordinates.shape != system_shape:
+        raise ValueError(
+            "preprocessing_positions must have shape "
+            f"{system_shape}, got {coordinates.shape}"
+        )
+
+    if indices is not None:
+        coordinates = coordinates[indices]
+
+    if coordinates.shape != fallback_shape:
+        raise ValueError(
+            "selected preprocessing_positions must have shape "
+            f"{fallback_shape}, got {coordinates.shape}"
+        )
+    return coordinates
 
 
 def _preprocessFeNNix(

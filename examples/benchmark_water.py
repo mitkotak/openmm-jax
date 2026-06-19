@@ -14,10 +14,11 @@ from openmmml.mlpotential import MLPotential
 
 WATER_DIR = Path(__file__).with_name("water")
 SIZES = [3, 9, 21, 30, 96, 774, 2661, 6282, 12255, 21384, 98880, 999999]
+# SIZES = [774,]
 # CASES = ("mace-off-s(23)", "mace-off-s(23)-python", "mace-off-m(24)", "mace-off-m(24)-python")
-# CASES = ("fennix-bio1-small-jax-python", "fennix-bio1-small-jax")
+CASES = ("fennix-bio1-small-jax-python", "fennix-bio1-small-jax")
 # CASES = ("ani2x-jax-model0", "ani2x-jax-ensemble")
-CASES = ("aimnet2-jax", "aimnet2-jax-python")
+# CASES = ("aimnet2-jax", "aimnet2-jax-python")
 
 CASE_LABELS = {
     "fennix-bio1-small-jax": "FeNNix-S (JaxForce)",
@@ -45,6 +46,7 @@ EQUILIBRATION_STEPS = 100
 WARMUP_STEPS = 10
 PRODUCTION_STEPS = 100
 
+
 def setup_simulation(model_name: str, size: int) -> tuple[Simulation, dict[str, object]]:
     pdb = PDBFile(str(WATER_DIR / f"water_atoms_{size}.pdb"))
     topology = pdb.topology
@@ -53,10 +55,11 @@ def setup_simulation(model_name: str, size: int) -> tuple[Simulation, dict[str, 
         system = MLPotential("fennix-bio1-small-jax").createSystem(
             topology,
             removeCMMotion=False,
+            preprocessing_positions=pdb.positions,
         )
     elif model_name == "fennix-bio1-small-jax-python":
         importlib.import_module("openmmjax_models.fennixpotential_pythonforce")
-        system = MLPotential("fennix-bio1-small-python").createSystem(
+        system = MLPotential("fennix-bio1-small-jax-python").createSystem(
             topology,
             removeCMMotion=False,
         )
