@@ -21,6 +21,7 @@ Currently supporting inference only
 - ANI2x (both single and ensemble)
 - FeNNix
 - MACE-OFF
+- AIMNet2
 
 ## Design Notes
 
