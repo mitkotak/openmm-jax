@@ -254,13 +254,14 @@ def _energyANI(
         neighbors=angular_neighbor_list,
     )
     return (
-        model(
-            positions,
-            species,
-            box_vectors=box_vectors,
-            radial_neighbors=radial_neighbors,
-            angular_neighbors=angular_neighbors,
-            periodic=pbc,
+        jnp.sum(
+            model.node_energies(
+                positions,
+                species,
+                radial_neighbor_idx=radial_neighbors.idx,
+                angular_neighbor_idx=angular_neighbors.idx,
+                box_vectors=box_vectors if pbc else None,
+            )
         )
         * HARTREE_TO_KJMOL
     )

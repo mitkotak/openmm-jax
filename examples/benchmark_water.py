@@ -13,11 +13,11 @@ from openmm.app import PDBFile, Simulation
 from openmmml.mlpotential import MLPotential
 
 WATER_DIR = Path(__file__).with_name("water")
-# SIZES = [3, 9, 21, 30, 96, 774, 2661, 6282, 12255, 21384, 98880, 999999]
+SIZES = [3, 9, 21, 30, 96, 774, 2661, 6282, 12255, 21384, 98880, 999999]
 # CASES = ("mace-off-s(23)", "mace-off-s(23)-python", "mace-off-m(24)", "mace-off-m(24)-python")
-SIZES = [774,]
-CASES = ("fennix-bio1-small-jax-python", "fennix-bio1-small-jax")
+# CASES = ("fennix-bio1-small-jax-python", "fennix-bio1-small-jax")
 # CASES = ("ani2x-jax-model0", "ani2x-jax-ensemble")
+CASES = ("aimnet2-jax", "aimnet2-jax-python")
 
 CASE_LABELS = {
     "fennix-bio1-small-jax": "FeNNix-S (JaxForce)",
@@ -26,10 +26,12 @@ CASE_LABELS = {
     "ani2x-jax-model0": "ANI2x-JAX model0 (JaxForce)",
     "ani2x-jax-ensemble": "ANI2x-JAX ensemble (JaxForce)",
     "ani2x-jax-python": "ANI2x-JAX model0 (PythonForce)",
+    "aimnet2-jax": "AIMNet2-JAX (JaxForce)",
+    "aimnet2-jax-python": "AIMNet2-JAX (PythonForce)",
     "mace-off-s(23)": "MACE-JAX-OFF-S(23) (JaxForce)",
     "mace-off-m(24)": "MACE-JAX-OFF-M(24) (JaxForce)",
     "mace-off-s(23)-python": "MACE-JAX-OFF-S(23) (PythonForce)",
-     "mace-off-m(24)-python": "MACE-JAX-OFF-M(24) (PythonForce)",
+    "mace-off-m(24)-python": "MACE-JAX-OFF-M(24) (PythonForce)",
 }
 TEMP_K = 400.0
 FRICTION_PER_PS = 1.0
@@ -58,6 +60,12 @@ def setup_simulation(model_name: str, size: int) -> tuple[Simulation, dict[str, 
             topology,
             removeCMMotion=False,
         )
+    elif model_name == "ani2x-jax-python":
+        importlib.import_module("openmmjax_models.anipotential_pythonforce")
+        system = MLPotential("ani2x-jax-python").createSystem(
+            topology,
+            removeCMMotion=False,
+        )
     elif model_name.startswith("ani2x-jax"):
         importlib.import_module("openmmjax_models.anipotential")
         system = MLPotential(model_name).createSystem(
@@ -65,11 +73,19 @@ def setup_simulation(model_name: str, size: int) -> tuple[Simulation, dict[str, 
             removeCMMotion=False,
             periodic_neighborlist=False,
         )
-    elif model_name == "ani2x-jax-python":
-        importlib.import_module("openmmjax_models.anipotential_pythonforce")
-        system = MLPotential("ani2x-jax-python").createSystem(
+    elif model_name == "aimnet2-jax":
+        importlib.import_module("openmmjax_models.aimnet2potential")
+        system = MLPotential("aimnet2-jax").createSystem(
             topology,
             removeCMMotion=False,
+            periodic_neighborlist=False,
+        )
+    elif model_name == "aimnet2-jax-python":
+        importlib.import_module("openmmjax_models.aimnet2potential_pythonforce")
+        system = MLPotential("aimnet2-jax-python").createSystem(
+            topology,
+            removeCMMotion=False,
+            periodic_neighborlist=False,
         )
     elif model_name.startswith("mace-off-") and not model_name.endswith("-python"):
         importlib.import_module("openmmjax_models.macepotential")
@@ -160,7 +176,6 @@ def main() -> int:
         for case in CASES:
             run_case(case, size)
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

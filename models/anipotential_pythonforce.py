@@ -42,7 +42,9 @@ class ANI2xPythonForcePotentialImpl(MLPotentialImpl):
         **_args,
     ):
         if periodic_neighborlist:
-            raise ValueError("ANI2x-JAX PythonForce periodic neighbor lists are currently disabled.")
+            raise ValueError(
+                "ANI2x-JAX PythonForce periodic neighbor lists are currently disabled."
+            )
 
         includedAtoms = list(topology.atoms())
         if atoms is not None:
@@ -148,13 +150,14 @@ def _energyANI(
         neighbors=angular_neighbor_list,
     )
     return (
-        model(
-            positions,
-            species,
-            box_vectors=None,
-            radial_neighbors=radial_neighbors,
-            angular_neighbors=angular_neighbors,
-            periodic=False,
+        jnp.sum(
+            model.node_energies(
+                positions,
+                species,
+                radial_neighbor_idx=radial_neighbors.idx,
+                angular_neighbor_idx=angular_neighbors.idx,
+                box_vectors=None,
+            )
         )
         * HARTREE_TO_KJMOL
     )

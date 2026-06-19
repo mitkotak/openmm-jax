@@ -423,7 +423,7 @@ class ANI2x(eqx.Module):
 
         mlp_energies = x.squeeze(-1)
         atom_energies = jax.lax.stop_gradient(self.atom_energies[local_species])
-        return jnp.mean(jnp.sum(mlp_energies + atom_energies[:, None], axis=0))
+        return jnp.mean(mlp_energies + atom_energies[:, None], axis=1)
 
     def __call__(
         self,
@@ -463,12 +463,14 @@ class ANI2x(eqx.Module):
                 periodic=periodic,
             )
             angular_neighbor_idx = angular_neighbors.idx
-        return self.node_energies(
-            positions,
-            species,
-            radial_neighbor_idx=radial_neighbor_idx,
-            angular_neighbor_idx=angular_neighbor_idx,
-            box_vectors=box_vectors if periodic else None,
+        return jnp.sum(
+            self.node_energies(
+                positions,
+                species,
+                radial_neighbor_idx=radial_neighbor_idx,
+                angular_neighbor_idx=angular_neighbor_idx,
+                box_vectors=box_vectors if periodic else None,
+            )
         )
 
 

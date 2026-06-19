@@ -20,15 +20,18 @@ from openmmml.mlpotential import MLPotential
 INPUT_PDB = Path(__file__).with_name("phenol.pdb")
 PHENOL_SMILES = "c1ccccc1O"
 SMALL_MOLECULE_FORCEFIELD = "gaff-2.2.20"
-CASES = ("mm", "mace-off-s(23)", "mace-off-m(24)")
+CASES = ("mm", "aimnet2-jax", "aimnet2-jax-python")
 CASE_LABELS = {
     "mm": "GAFF/TIP3P",
     "ani2x-jax-model0": "ANI2x-JAX model0",
     "ani2x-jax-ensemble": "ANI2x-JAX ensemble",
-    "fennix-bio1-small-jax": "FeNNix-S(JaxForce)",
+    "fennix-bio1-small-jax": "FeNNix-S (JaxForce)",
     "fennix-bio1-small-python": "FeNNix-S (PythonForce)",
-    "mace-off-s(23)": "MACE-OFF-S(23)",
-    "mace-off-m(24)": "MACE-OFF-M(24)",
+    "mace-off-s(23)": "MACE-OFF-S(23) (JaxForce)",
+    "mace-off-m(24)": "MACE-OFF-M(24) (JaxForce)",
+    "aimnet2-jax": "AIMNet2-JAX (JaxForce)",
+    "aimnet2-jax-python": "AIMNet2-JAX (PythonForce)",
+ 
 }
 CASE_COLORS = {
     "GAFF/TIP3P": "#3d64c8",
@@ -38,6 +41,7 @@ CASE_COLORS = {
     "FeNNix-S (PythonForce)": "#f5a623",
     "MACE-OFF-S(23) (JaxForce)": "#7a52cc",
     "MACE-OFF-M(24) (JaxForce)": "#00bfa5",
+    
 }
 PLATFORM = "CUDA"
 TEMP_K = 300.0
@@ -202,6 +206,16 @@ def run_simulation(
             removeConstraints=True,
             periodic_neighborlist=False,
         )
+    elif model_name.startswith("aimnet2-jax"):
+        importlib.import_module("openmmjax_models.aimnet2potential")
+        cloned = openmm.XmlSerializer.deserialize(openmm.XmlSerializer.serialize(mm_system))
+        system = MLPotential(model_name).createMixedSystem(
+            topology,
+            cloned,
+            ml_atoms,
+            removeConstraints=True,
+            periodic_neighborlist=False,
+        ) 
     else:
         raise ValueError(f"unknown RDF case: {model_name}")
 
