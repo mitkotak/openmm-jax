@@ -1,5 +1,3 @@
-"""OpenMM integration for the bundled ORB v3 conservative OMol JAX model."""
-
 from __future__ import annotations
 
 from functools import partial

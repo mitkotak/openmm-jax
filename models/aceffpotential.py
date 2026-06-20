@@ -1,5 +1,3 @@
-"""OpenMM integration for AceFF JAX models."""
-
 from __future__ import annotations
 
 from functools import partial

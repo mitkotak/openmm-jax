@@ -1,5 +1,3 @@
-"""OpenMM integration for the bundled MACE-OFF JAX models."""
-
 from __future__ import annotations
 
 from functools import partial

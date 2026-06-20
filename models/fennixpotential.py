@@ -1,5 +1,3 @@
-"""OpenMM integration for the FeNNix JAX model."""
-
 from __future__ import annotations
 
 import os

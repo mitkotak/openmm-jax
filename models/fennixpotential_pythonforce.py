@@ -47,11 +47,6 @@ from openmmml.mlpotential import MLPotential, MLPotentialImpl, MLPotentialImplFa
 from .fennixpotential import (
     FeNNixPotentialImpl as _JaxFeNNixPotentialImpl,
 )
-from .fennixpotential import (
-    _energyAndForcesFeNNix,
-    _energyFeNNix,
-    _initial_preprocessing_coordinates_angstrom,
-)
 
 
 class FeNNixPotentialImplFactory(MLPotentialImplFactory):
@@ -105,11 +100,6 @@ class FeNNixPotentialImpl(MLPotentialImpl):
                 raise ValueError(
                     f"Invalid precision {precision!r} (expected 'single' or 'double')"
                 )
-        if preprocessing_positions is None:
-            raise ValueError(
-                "FeNNix PythonForce requires preprocessing_positions to initialize "
-                "fixed preprocessing shapes."
-            )
 
         with jax.enable_x64(use_float64):
             if matmul_prec is not None:
@@ -147,15 +137,14 @@ class FeNNixPotentialImpl(MLPotentialImpl):
                 included_atoms = [included_atoms[i] for i in atoms]
                 atom_indices_np = np.asarray(atoms, dtype=np.int32)
 
-            species = jnp.asarray(
+            species = jnp.array(
                 [atom.element.atomic_number for atom in included_atoms],
                 dtype=jnp.int32,
             )
-            num_system_atoms = system.getNumParticles() or topology.getNumAtoms()
             static_inputs = {
-                "species": np.asarray(species),
-                "natoms": np.asarray([species.size], dtype=np.int32),
-                "batch_index": np.zeros(species.size, dtype=np.int32),
+                "species": species,
+                "natoms": jnp.array([species.size], dtype=jnp.int32),
+                "batch_index": jnp.zeros(species.size, dtype=jnp.int32),
                 "total_charge": charge,
             }
 
@@ -167,33 +156,10 @@ class FeNNixPotentialImpl(MLPotentialImpl):
             if force_periodic and minimum_image:
                 static_inputs["flags"] = {"minimum_image": None}
 
-            dtype = np.float64 if use_float64 else np.float32
-            preproc_coordinates = _initial_preprocessing_coordinates_angstrom(
-                preprocessing_positions,
-                dtype=dtype,
-                indices=atom_indices_np,
-                system_shape=(num_system_atoms, 3),
-                fallback_shape=(species.size, 3),
-                positions_unit=preprocessing_positions_unit,
-            )
-            preproc_inputs = {**static_inputs, "coordinates": preproc_coordinates}
-            if force_periodic:
-                box_vectors = topology.getPeriodicBoxVectors()
-                if box_vectors is None:
-                    box_vectors = system.getDefaultPeriodicBoxVectors()
-                cells_ang = np.asarray(
-                    [vector.value_in_unit(unit.angstrom) for vector in box_vectors],
-                    dtype=dtype,
-                ).reshape(1, 3, 3)
-                preproc_inputs["cells"] = cells_ang
-                preproc_inputs["reciprocal_cells"] = np.linalg.inv(cells_ang)
-            preproc_state, _ = model.preprocessing.init_with_output(preproc_inputs)
-
             force = openmm.PythonForce(
                 _ComputeFeNNixPythonForce(
                     model=model,
                     static_inputs=static_inputs,
-                    preproc_state=preproc_state,
                     energy_scale=energy_scale,
                     force_scale=force_scale,
                     indices=atom_indices_np,
@@ -212,7 +178,6 @@ class _ComputeFeNNixPythonForce:
         *,
         model,
         static_inputs,
-        preproc_state,
         energy_scale: float,
         force_scale: float,
         indices,
@@ -221,7 +186,6 @@ class _ComputeFeNNixPythonForce:
     ) -> None:
         self.model = model
         self.static_inputs = static_inputs
-        self.preproc_state = preproc_state
         self.energy_scale = energy_scale
         self.force_scale = force_scale
         self.periodic = bool(periodic)
@@ -231,45 +195,29 @@ class _ComputeFeNNixPythonForce:
         self._jax_indices = (
             None if self.indices is None else jnp.asarray(self.indices, dtype=jnp.int32)
         )
-        self._energy_and_forces = None
-
-    def _energy_kjmol(self, positions_nm, box_vectors_nm=None):
-        selected_positions = (
-            positions_nm if self._jax_indices is None else positions_nm[self._jax_indices]
-        )
-        return _energyFeNNix(
-            (selected_positions, box_vectors_nm),
-            model=self.model,
-            static_inputs=self.static_inputs,
-            preproc_state=self.preproc_state,
-            pbc=self.periodic,
-            energy_scale=self.energy_scale,
-            coordinate_dtype=self.coordinate_dtype,
-        )
 
     def _energy_and_forces_kjmol(self, positions_nm, box_vectors_nm=None):
         selected_positions = (
             positions_nm if self._jax_indices is None else positions_nm[self._jax_indices]
         )
-        energy, forces = _energyAndForcesFeNNix(
-            (selected_positions, box_vectors_nm),
-            model=self.model,
-            static_inputs=self.static_inputs,
-            preproc_state=self.preproc_state,
-            pbc=self.periodic,
-            energy_scale=self.energy_scale,
-            force_scale=self.force_scale,
-            coordinate_dtype=self.coordinate_dtype,
+        coordinates = (
+            selected_positions * unit.nanometer.conversion_factor_to(unit.angstrom)
+        ).astype(self.coordinate_dtype)
+        inputs = {"coordinates": coordinates, **self.static_inputs}
+        if self.periodic and box_vectors_nm is not None:
+            inputs["cells"] = (
+                box_vectors_nm * unit.nanometer.conversion_factor_to(unit.angstrom)
+            ).reshape(1, 3, 3).astype(self.coordinate_dtype)
+        model_outputs = self.model.energy_and_forces(
+            gpu_preprocessing=True,
+            **inputs,
         )
+        energy, forces = model_outputs[:2]
+        energy = energy.squeeze() * self.energy_scale
+        forces = forces * self.force_scale
         if self._jax_indices is not None:
             forces = jnp.zeros_like(positions_nm).at[self._jax_indices].set(forces)
         return energy, forces
-
-    def _compiled_energy_and_forces(self):
-        if self._energy_and_forces is None:
-            with jax.enable_x64(self.use_float64):
-                self._energy_and_forces = jax.jit(self._energy_and_forces_kjmol)
-        return self._energy_and_forces
 
     def __call__(self, state):
         with jax.enable_x64(self.use_float64):
@@ -283,7 +231,7 @@ class _ComputeFeNNixPythonForce:
                     state.getPeriodicBoxVectors(asNumpy=True).value_in_unit(unit.nanometer),
                     dtype=self.coordinate_dtype,
                 )
-            energy, forces = self._compiled_energy_and_forces()(
+            energy, forces = self._energy_and_forces_kjmol(
                 positions_nm,
                 box_vectors_nm,
             )

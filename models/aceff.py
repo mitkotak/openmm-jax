@@ -1,3 +1,5 @@
+# Credit to https://github.com/torchmd/torchmd-net
+
 import json
 import pickle
 from os import PathLike

@@ -1,4 +1,4 @@
-"""Pure JAX inference helpers for the bundled ORB v3 conservative OMol model."""
+# Credit to https://github.com/orbital-materials/orb-models
 
 from __future__ import annotations
 

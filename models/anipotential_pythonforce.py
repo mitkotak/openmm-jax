@@ -1,5 +1,3 @@
-"""OpenMM PythonForce integration for the bundled ANI2x-JAX model."""
-
 from __future__ import annotations
 
 from typing import Iterable, Optional

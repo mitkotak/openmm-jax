@@ -1,5 +1,3 @@
-"""OpenMM integration for the bundled ANI2x-JAX model."""
-
 from __future__ import annotations
 
 from functools import partial
