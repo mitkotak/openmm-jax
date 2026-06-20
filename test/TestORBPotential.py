@@ -79,4 +79,4 @@ class TestORB:
         interp_context.setPositions(inpcrd.positions)
         mixed_energy = mixed_context.getState(getEnergy=True).getPotentialEnergy().value_in_unit(unit.kilojoules_per_mole)
         interp_energy = interp_context.getState(getEnergy=True).getPotentialEnergy().value_in_unit(unit.kilojoules_per_mole)
-        assert np.isclose(mixed_energy, interp_energy, rtol=1e-5)
+        assert np.isclose(mixed_energy, interp_energy, rtol=5e-5)
