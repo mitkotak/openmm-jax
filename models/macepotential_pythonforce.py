@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from typing import Iterable, Optional
 
 import jax
@@ -44,6 +43,8 @@ class MACEPythonForcePotentialImpl(MLPotentialImpl):
         neighbor_cell_atom_threshold: Optional[int] = None,
         neighbor_cell_capacity_multiplier: Optional[float] = None,
         periodic_neighborlist: bool = True,
+        preprocessing_positions=None,
+        preprocessing_positions_unit=unit.nanometer,
         **_args,
     ):
         includedAtoms = list(topology.atoms())
@@ -70,9 +71,15 @@ class MACEPythonForcePotentialImpl(MLPotentialImpl):
         )
         use_periodic_neighbors = periodic and periodic_neighborlist
         allocation_box = _initial_box_vectors_angstrom(topology, system, use_periodic_neighbors)
+        allocation_positions = preprocessing_allocation_positions(
+            preprocessing_positions,
+            atoms,
+            preprocessing_positions_unit,
+        )
         neighbor_list = allocate_neighbor_list(
             len(includedAtoms),
             allocation_box,
+            allocation_positions=allocation_positions,
             cell_atom_threshold=int(model.neighbor_cell_atom_threshold),
             cutoff=float(model.cutoff),
             cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
@@ -94,11 +101,7 @@ class MACEPythonForcePotentialImpl(MLPotentialImpl):
 
 
 for model_name in MACE_MODEL_NAMES:
-    MLPotential.registerImplFactory(
-        f"{model_name}-pythonforce", MACEPythonForcePotentialImplFactory()
-    )
     MLPotential.registerImplFactory(f"{model_name}-python", MACEPythonForcePotentialImplFactory())
-MLPotential.registerImplFactory("mace-jax-pythonforce", MACEPythonForcePotentialImplFactory())
 MLPotential.registerImplFactory("mace-jax-python", MACEPythonForcePotentialImplFactory())
 
 __all__ = [
@@ -111,7 +114,7 @@ __all__ = [
 def _builtin_model_name(name: str):
     if name in MACE_MODEL_NAMES:
         return name
-    for suffix in ("-pythonforce", "-python"):
+    for suffix in ("-python",):
         if name.endswith(suffix):
             model_name = name[: -len(suffix)]
             if model_name in MACE_MODEL_NAMES:
@@ -135,12 +138,19 @@ def allocate_neighbor_list(
     num_atoms: int,
     box_vectors_angstrom,
     *,
+    allocation_positions=None,
     cell_atom_threshold: int,
     cutoff: float,
     cell_capacity_multiplier: float,
     periodic: bool,
 ):
-    positions = _neighbor_allocation_positions(num_atoms, periodic=periodic)
+    positions = allocation_positions
+    if positions is None:
+        raise ValueError("MACE PythonForce requires preprocessing_positions.")
+    if periodic:
+        if box_vectors_angstrom is None:
+            raise ValueError("periodic neighbor-list allocation requires a box.")
+        positions = _fractional_coordinates(positions, box_vectors_angstrom)
     return get_neighbors(
         positions,
         box_vectors_angstrom,
@@ -152,23 +162,22 @@ def allocate_neighbor_list(
     )
 
 
-def _neighbor_allocation_positions(num_atoms: int, *, periodic: bool):
-    if num_atoms <= 0:
-        return jnp.zeros((0, 3), dtype=jnp.float32)
-    if not periodic:
-        return jnp.zeros((num_atoms, 3), dtype=jnp.float32)
-
-    grid_size = max(1, math.ceil(num_atoms ** (1.0 / 3.0)))
-    atom_ids = jnp.arange(num_atoms, dtype=jnp.int32)
-    grid_positions = jnp.stack(
-        (
-            atom_ids % grid_size,
-            (atom_ids // grid_size) % grid_size,
-            atom_ids // (grid_size * grid_size),
-        ),
-        axis=-1,
-    )
-    return (grid_positions.astype(jnp.float32) + 0.5) / grid_size
+def preprocessing_allocation_positions(
+    preprocessing_positions,
+    atoms,
+    preprocessing_positions_unit,
+):
+    if preprocessing_positions is None:
+        raise ValueError("MACE PythonForce requires preprocessing_positions.")
+    if hasattr(preprocessing_positions, "value_in_unit"):
+        positions = preprocessing_positions.value_in_unit(unit.angstrom)
+    else:
+        scale = preprocessing_positions_unit.conversion_factor_to(unit.angstrom)
+        positions = jnp.asarray(preprocessing_positions, dtype=jnp.float32) * scale
+    positions = jnp.asarray(positions, dtype=jnp.float32)
+    if atoms is not None:
+        positions = positions[jnp.asarray(atoms, dtype=jnp.int32)]
+    return positions
 
 
 def _energyMACE(
@@ -208,9 +217,13 @@ def _energyMACE(
 
 
 def _fractional_positions(positions, box_vectors):
-    openmm_box = jnp.swapaxes(jnp.asarray(box_vectors, dtype=positions.dtype), -1, -2)
-    fractional = space.transform(_restricted_box_inverse(openmm_box), positions)
+    fractional = _fractional_coordinates(positions, box_vectors)
     return fractional - jnp.floor(fractional)
+
+
+def _fractional_coordinates(positions, box_vectors):
+    openmm_box = jnp.swapaxes(jnp.asarray(box_vectors, dtype=positions.dtype), -1, -2)
+    return space.transform(_restricted_box_inverse(openmm_box), positions)
 
 
 def _restricted_box_inverse(box):

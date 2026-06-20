@@ -15,12 +15,17 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from jax_md import partition, space
+from openmm import unit
 
 jax.config.update("jax_default_matmul_precision", "highest")
 
-HARTREE_TO_KJMOL = 2625.4996382852164
+HARTREE_TO_KJMOL = (unit.hartree * unit.AVOGADRO_CONSTANT_NA).value_in_unit(
+    unit.kilojoules_per_mole
+)
 
 MACE_MODEL_PATHS = {
+    "mace-jax-off-s-23": Path(__file__).resolve().parent / "mace-off-s(23).eqx",
+    "mace-jax-off-m-24": Path(__file__).resolve().parent / "mace-off-m(24).eqx",
     "mace-off-s(23)": Path(__file__).resolve().parent / "mace-off-s(23).eqx",
     "mace-off-m(24)": Path(__file__).resolve().parent / "mace-off-m(24).eqx",
 }

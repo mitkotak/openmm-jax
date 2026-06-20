@@ -30,14 +30,21 @@ USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
 
 from typing import Iterable
+
 import openmm
 from openmm import unit
 from openmmml.mlpotential import MLPotential, MLPotentialImpl, MLPotentialImplFactory
 
+
 class FeNNixPotentialImplFactory(MLPotentialImplFactory):
     """This is the factory that creates FeNNixPotentialImpl objects."""
 
-    def createImpl(self, name: str, modelPath: str | None = None, **args) -> MLPotentialImpl:
+    def createImpl(
+        self,
+        name: str,
+        modelPath: str | None = None,
+        **args,
+    ) -> MLPotentialImpl:
         name = _base_model_name(name)
         return FeNNixPotentialImpl(name, modelPath)
 
@@ -53,18 +60,36 @@ class FeNNixPotentialImpl(MLPotentialImpl):
 
     >>> potential = MLPotential('fennix-bio1-small')
 
-    Other available models include 'fennix-bio1-medium', 'fennix-bio1-small-finetune-ions', and 'fennix-bio1-medium-finetune-ions'.
+    Other available models include 'fennix-bio1-medium',
+    'fennix-bio1-small-finetune-ions', and 'fennix-bio1-medium-finetune-ions'.
 
-    To use a local `.fnx` file, specify 'fennix' as the model name, and supply the `modelPath` argument, *e.g.*,
+    To use a local `.fnx` file, specify 'fennix' as the model name, and supply the
+    `modelPath` argument, *e.g.*,
 
     >>> potential = MLPotential('fennix', modelPath='custom_fennix_model.fnx')
     """
 
     KNOWN_MODELS = {
-        "fennix-bio1-small": ("https://github.com/FeNNol-tools/FeNNol-PMC/raw/refs/heads/main/FENNIX-BIO1/v1.0/fennix-bio1S.fnx", True),
-        "fennix-bio1-medium": ("https://github.com/FeNNol-tools/FeNNol-PMC/raw/refs/heads/main/FENNIX-BIO1/v1.0/fennix-bio1M.fnx", True),
-        "fennix-bio1-small-finetune-ions": ("https://github.com/FeNNol-tools/FeNNol-PMC/raw/refs/heads/main/FENNIX-BIO1/v1.0-finetuneIons/fennix-bio1S-finetuneIons.fnx", True),
-        "fennix-bio1-medium-finetune-ions": ("https://github.com/FeNNol-tools/FeNNol-PMC/raw/refs/heads/main/FENNIX-BIO1/v1.0-finetuneIons/fennix-bio1M-finetuneIons.fnx", True),
+        "fennix-bio1-small": (
+            "https://github.com/FeNNol-tools/FeNNol-PMC/raw/refs/heads/main/"
+            "FENNIX-BIO1/v1.0/fennix-bio1S.fnx",
+            True,
+        ),
+        "fennix-bio1-medium": (
+            "https://github.com/FeNNol-tools/FeNNol-PMC/raw/refs/heads/main/"
+            "FENNIX-BIO1/v1.0/fennix-bio1M.fnx",
+            True,
+        ),
+        "fennix-bio1-small-finetune-ions": (
+            "https://github.com/FeNNol-tools/FeNNol-PMC/raw/refs/heads/main/"
+            "FENNIX-BIO1/v1.0-finetuneIons/fennix-bio1S-finetuneIons.fnx",
+            True,
+        ),
+        "fennix-bio1-medium-finetune-ions": (
+            "https://github.com/FeNNol-tools/FeNNol-PMC/raw/refs/heads/main/"
+            "FENNIX-BIO1/v1.0-finetuneIons/fennix-bio1M-finetuneIons.fnx",
+            True,
+        ),
     }
 
     def __init__(self, name: str, modelPath: str | None) -> None:
@@ -116,7 +141,11 @@ class FeNNixPotentialImpl(MLPotentialImpl):
             url, warn = FeNNixPotentialImpl.KNOWN_MODELS[self.name]
             if warn:
                 import logging
-                logging.warning(f"The model {self.name} is distributed under the restrictive ASL license.  Commercial use is not permitted.")
+
+                logging.warning(
+                    f"The model {self.name} is distributed under the restrictive ASL "
+                    "license.  Commercial use is not permitted."
+                )
             modelPath = self._downloadOrFindFile(f"{self.name}.fnx", url)
         elif self.name == "fennix":
             if self.modelPath is None:
@@ -124,7 +153,10 @@ class FeNNixPotentialImpl(MLPotentialImpl):
             modelPath = self.modelPath
         else:
             supported_options = ", ".join(list(FeNNixPotentialImpl.KNOWN_MODELS) + ["fennix"])
-            raise ValueError(f"Unsupported FeNNix model: {self.name} (options are {supported_options})")
+            raise ValueError(
+                f"Unsupported FeNNix model: {self.name} "
+                f"(options are {supported_options})"
+            )
 
         # Load the model.
         model = fennol.FENNIX.load(modelPath, **args)
@@ -141,7 +173,10 @@ class FeNNixPotentialImpl(MLPotentialImpl):
             indices = np.array(atoms, dtype=int)
 
         # Prepare inputs to the model that remain constant from step to step.
-        species = jnp.array([atom.element.atomic_number for atom in includedAtoms], dtype=jnp.int32)
+        species = jnp.array(
+            [atom.element.atomic_number for atom in includedAtoms],
+            dtype=jnp.int32,
+        )
         inputs = dict(
             species=species,
             natoms=jnp.array([species.size], dtype=jnp.int32),
@@ -150,8 +185,21 @@ class FeNNixPotentialImpl(MLPotentialImpl):
         )
 
         # Create the PythonForce and add it to the System.
-        periodic = (topology.getPeriodicBoxVectors() is not None) or system.usesPeriodicBoundaryConditions()
-        force = openmm.PythonForce(_ComputeFeNNix(model, energyScale, forceScale, indices, inputs, periodic, useDouble))
+        periodic = (
+            topology.getPeriodicBoxVectors() is not None
+            or system.usesPeriodicBoundaryConditions()
+        )
+        force = openmm.PythonForce(
+            _ComputeFeNNix(
+                model,
+                energyScale,
+                forceScale,
+                indices,
+                inputs,
+                periodic,
+                useDouble,
+            )
+        )
         force.setForceGroup(forceGroup)
         force.setUsesPeriodicBoundaryConditions(periodic)
         system.addForce(force)
@@ -176,14 +224,27 @@ class _ComputeFeNNix:
         if self.indices is not None:
             positions = positions[self.indices]
         if self.periodic:
-            cells = state.getPeriodicBoxVectors(asNumpy=True).value_in_unit(unit.angstrom).reshape(1, 3, 3)
+            cells = (
+                state.getPeriodicBoxVectors(asNumpy=True)
+                .value_in_unit(unit.angstrom)
+                .reshape(1, 3, 3)
+            )
 
         # Invoke the model to get the energy and forces.
         with jax.enable_x64(self.useDouble):
             if self.periodic:
-                modelOutputs = self.model.energy_and_forces(coordinates=positions, cells=cells, gpu_preprocessing=True, **self.inputs)
+                modelOutputs = self.model.energy_and_forces(
+                    coordinates=positions,
+                    cells=cells,
+                    gpu_preprocessing=True,
+                    **self.inputs,
+                )
             else:
-                modelOutputs = self.model.energy_and_forces(coordinates=positions, gpu_preprocessing=True, **self.inputs)
+                modelOutputs = self.model.energy_and_forces(
+                    coordinates=positions,
+                    gpu_preprocessing=True,
+                    **self.inputs,
+                )
             jaxEnergy, jaxForces = modelOutputs[:2]
             energy = jaxEnergy.item() * self.energyScale
             jaxForces *= self.forceScale
@@ -196,11 +257,28 @@ class _ComputeFeNNix:
         return energy, forces
 
     def __getstate__(self):
-        return (self.model.to_dict(), self.energyScale, self.forceScale, self.indices, self.inputs, self.periodic, self.useDouble)
+        return (
+            self.model.to_dict(),
+            self.energyScale,
+            self.forceScale,
+            self.indices,
+            self.inputs,
+            self.periodic,
+            self.useDouble,
+        )
 
     def __setstate__(self, pickle_state):
         import fennol
-        model_dict, self.energyScale, self.forceScale, self.indices, self.inputs, self.periodic, self.useDouble = pickle_state
+
+        (
+            model_dict,
+            self.energyScale,
+            self.forceScale,
+            self.indices,
+            self.inputs,
+            self.periodic,
+            self.useDouble,
+        ) = pickle_state
         self.model = fennol.FENNIX(**model_dict)
 
 

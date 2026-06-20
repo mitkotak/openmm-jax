@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from typing import Iterable, Optional
 
 import jax
@@ -22,14 +21,38 @@ from .aimnet2 import (
 
 
 class AIMNet2PythonForcePotentialImplFactory(MLPotentialImplFactory):
-    def createImpl(self, name, modelPath=None, **_args):
-        return AIMNet2PythonForcePotentialImpl(name, modelPath=modelPath)
+    def createImpl(
+        self,
+        name,
+        modelPath=None,
+        charge: float = 0.0,
+        total_charge: Optional[float] = None,
+        multiplicity: int = 1,
+        **_args,
+    ):
+        return AIMNet2PythonForcePotentialImpl(
+            name,
+            modelPath=modelPath,
+            charge=charge,
+            total_charge=total_charge,
+            multiplicity=multiplicity,
+        )
 
 
 class AIMNet2PythonForcePotentialImpl(MLPotentialImpl):
-    def __init__(self, name, modelPath=None):
+    def __init__(
+        self,
+        name,
+        modelPath=None,
+        charge: float = 0.0,
+        total_charge: Optional[float] = None,
+        multiplicity: int = 1,
+    ):
         self.name = name
         self.modelPath = modelPath
+        self.charge = charge
+        self.total_charge = total_charge
+        self.multiplicity = multiplicity
 
     def addForces(
         self,
@@ -38,11 +61,19 @@ class AIMNet2PythonForcePotentialImpl(MLPotentialImpl):
         atoms: Optional[Iterable[int]],
         forceGroup: int,
         modelPath: Optional[str] = None,
-        charge: float = 0.0,
+        charge: Optional[float] = None,
         total_charge: Optional[float] = None,
+        neighbor_cell_atom_threshold: Optional[int] = None,
+        neighbor_cell_capacity_multiplier: Optional[float] = None,
         periodic_neighborlist: bool = True,
+        multiplicity: Optional[int] = None,
+        preprocessing_positions=None,
+        preprocessing_positions_unit=unit.nanometer,
         **_args,
     ):
+        multiplicity = self.multiplicity if multiplicity is None else multiplicity
+        if multiplicity != 1:
+            raise ValueError("AIMNet2 JAX only supports multiplicity=1")
         includedAtoms = list(topology.atoms())
         if atoms is not None:
             atoms = list(atoms)
@@ -57,11 +88,24 @@ class AIMNet2PythonForcePotentialImpl(MLPotentialImpl):
         model_ref = self.modelPath if modelPath is None else modelPath
         if model_ref is None:
             if self.name in AIMNET2_MODEL_NAMES:
-                model = load_aimnet2_model(self.name)
+                model = load_aimnet2_model(
+                    self.name,
+                    neighbor_cell_atom_threshold=neighbor_cell_atom_threshold,
+                    neighbor_cell_capacity_multiplier=neighbor_cell_capacity_multiplier,
+                )
             else:
-                model = load_aimnet2_model(_builtin_model_name(self.name))
+                model = load_aimnet2_model(
+                    _builtin_model_name(self.name),
+                    neighbor_cell_atom_threshold=neighbor_cell_atom_threshold,
+                    neighbor_cell_capacity_multiplier=neighbor_cell_capacity_multiplier,
+                )
         else:
-            model = load_aimnet2_model(self.name, model_path=model_ref)
+            model = load_aimnet2_model(
+                self.name,
+                model_path=model_ref,
+                neighbor_cell_atom_threshold=neighbor_cell_atom_threshold,
+                neighbor_cell_capacity_multiplier=neighbor_cell_capacity_multiplier,
+            )
 
         unsupported = sorted(set(species_np.tolist()) - set(model.implemented_species))
         if unsupported:
@@ -82,9 +126,15 @@ class AIMNet2PythonForcePotentialImpl(MLPotentialImpl):
             system,
             use_periodic_neighbors,
         )
+        allocation_positions = preprocessing_allocation_positions(
+            preprocessing_positions,
+            atoms,
+            preprocessing_positions_unit,
+        )
         neighbor_list = allocate_neighbor_list(
             len(includedAtoms),
             allocation_box,
+            allocation_positions=allocation_positions,
             cell_atom_threshold=int(model.neighbor_cell_atom_threshold),
             cutoff=float(model.cutoff),
             cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
@@ -93,12 +143,17 @@ class AIMNet2PythonForcePotentialImpl(MLPotentialImpl):
         lr_neighbor_list = allocate_neighbor_list(
             len(includedAtoms),
             allocation_box,
+            allocation_positions=allocation_positions,
             cell_atom_threshold=int(model.neighbor_cell_atom_threshold),
             cutoff=float(model.lr_cutoff),
             cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
             periodic=use_periodic_neighbors,
         )
-        model_charge = charge if total_charge is None else total_charge
+        model_charge = self.charge if charge is None else charge
+        if total_charge is not None:
+            model_charge = total_charge
+        elif self.total_charge is not None:
+            model_charge = self.total_charge
 
         force = openmm.PythonForce(
             _ComputeAIMNet2PythonForce(
@@ -119,9 +174,6 @@ class AIMNet2PythonForcePotentialImpl(MLPotentialImpl):
 
 for model_name in AIMNET2_MODEL_NAMES:
     MLPotential.registerImplFactory(
-        f"{model_name}-pythonforce", AIMNet2PythonForcePotentialImplFactory()
-    )
-    MLPotential.registerImplFactory(
         f"{model_name}-python", AIMNet2PythonForcePotentialImplFactory()
     )
 
@@ -135,7 +187,7 @@ __all__ = [
 def _builtin_model_name(name: str):
     if name in AIMNET2_MODEL_NAMES:
         return name
-    for suffix in ("-pythonforce", "-python"):
+    for suffix in ("-python",):
         if name.endswith(suffix):
             model_name = name[: -len(suffix)]
             if model_name in AIMNET2_MODEL_NAMES:
@@ -182,12 +234,19 @@ def allocate_neighbor_list(
     num_atoms: int,
     box_vectors_angstrom,
     *,
+    allocation_positions=None,
     cell_atom_threshold: int,
     cutoff: float,
     cell_capacity_multiplier: float,
     periodic: bool,
 ):
-    positions = _neighbor_allocation_positions(num_atoms, periodic=periodic)
+    positions = allocation_positions
+    if positions is None:
+        raise ValueError("AIMNet2 PythonForce requires preprocessing_positions.")
+    if periodic:
+        if box_vectors_angstrom is None:
+            raise ValueError("periodic neighbor-list allocation requires a box.")
+        positions = _fractional_coordinates(positions, box_vectors_angstrom)
     return get_neighbors(
         positions,
         box_vectors_angstrom,
@@ -198,23 +257,22 @@ def allocate_neighbor_list(
     )
 
 
-def _neighbor_allocation_positions(num_atoms: int, *, periodic: bool):
-    if num_atoms <= 0:
-        return jnp.zeros((0, 3), dtype=jnp.float32)
-    if not periodic:
-        return jnp.zeros((num_atoms, 3), dtype=jnp.float32)
-
-    grid_size = max(1, math.ceil(num_atoms ** (1.0 / 3.0)))
-    atom_ids = jnp.arange(num_atoms, dtype=jnp.int32)
-    grid_positions = jnp.stack(
-        (
-            atom_ids % grid_size,
-            (atom_ids // grid_size) % grid_size,
-            atom_ids // (grid_size * grid_size),
-        ),
-        axis=-1,
-    )
-    return (grid_positions.astype(jnp.float32) + 0.5) / grid_size
+def preprocessing_allocation_positions(
+    preprocessing_positions,
+    atoms,
+    preprocessing_positions_unit,
+):
+    if preprocessing_positions is None:
+        raise ValueError("AIMNet2 PythonForce requires preprocessing_positions.")
+    if hasattr(preprocessing_positions, "value_in_unit"):
+        positions = preprocessing_positions.value_in_unit(unit.angstrom)
+    else:
+        scale = preprocessing_positions_unit.conversion_factor_to(unit.angstrom)
+        positions = jnp.asarray(preprocessing_positions, dtype=jnp.float32) * scale
+    positions = jnp.asarray(positions, dtype=jnp.float32)
+    if atoms is not None:
+        positions = positions[jnp.asarray(atoms, dtype=jnp.int32)]
+    return positions
 
 
 def _energyAIMNet2(
@@ -250,9 +308,13 @@ def _energyAIMNet2(
 
 
 def _fractional_positions(positions, box_vectors):
-    openmm_box = jnp.swapaxes(jnp.asarray(box_vectors, dtype=positions.dtype), -1, -2)
-    fractional = space.transform(_restricted_box_inverse(openmm_box), positions)
+    fractional = _fractional_coordinates(positions, box_vectors)
     return fractional - jnp.floor(fractional)
+
+
+def _fractional_coordinates(positions, box_vectors):
+    openmm_box = jnp.swapaxes(jnp.asarray(box_vectors, dtype=positions.dtype), -1, -2)
+    return space.transform(_restricted_box_inverse(openmm_box), positions)
 
 
 def _restricted_box_inverse(box):

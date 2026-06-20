@@ -9,6 +9,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax_md import partition, space
+from openmm import unit
 
 jax.config.update("jax_default_matmul_precision", "highest")
 
@@ -17,10 +18,13 @@ _DEFAULT_SINGLE_MODEL_PATH = Path(__file__).resolve().with_name("ani2x_model0.eq
 ANI2X_MODEL_PATHS = {
     "ani2x-jax": _DEFAULT_ENSEMBLE_MODEL_PATH,
     "ani2x-jax-ensemble": _DEFAULT_ENSEMBLE_MODEL_PATH,
+    "ani2x-model-0": _DEFAULT_SINGLE_MODEL_PATH,
     "ani2x-jax-model0": _DEFAULT_SINGLE_MODEL_PATH,
 }
 ANI2X_MODEL_NAMES = tuple(ANI2X_MODEL_PATHS)
-HARTREE_TO_KJMOL = 2625.5002
+HARTREE_TO_KJMOL = (unit.hartree * unit.AVOGADRO_CONSTANT_NA).value_in_unit(
+    unit.kilojoules_per_mole
+)
 
 
 def dense_neighbor_edges(
@@ -514,6 +518,7 @@ def load_ani2x_model(
     atomic_numbers=None,
     model_path: str | PathLike | None = None,
     neighbor_cell_atom_threshold: int | None = None,
+    neighbor_cell_capacity_multiplier: float | None = None,
 ) -> ANI2x:
     """Load an ANI-2x checkpoint, optionally specialized to a fixed atomic-number set."""
 
@@ -533,6 +538,10 @@ def load_ani2x_model(
         config = dict(config)
         if neighbor_cell_atom_threshold is not None:
             config["neighbor_cell_atom_threshold"] = int(neighbor_cell_atom_threshold)
+        if neighbor_cell_capacity_multiplier is not None:
+            config["neighbor_cell_capacity_multiplier"] = float(
+                neighbor_cell_capacity_multiplier
+            )
         active_species = None
         if atomic_numbers is not None:
             species = jnp.asarray(config["species_to_index"], dtype=jnp.int32)[

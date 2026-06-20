@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from functools import partial
 from typing import Iterable, Optional
 
@@ -45,7 +44,10 @@ class ANI2xPotentialImpl(MLPotentialImpl):
         forceGroup: int,
         modelPath: Optional[str] = None,
         neighbor_cell_atom_threshold: Optional[int] = None,
+        neighbor_cell_capacity_multiplier: Optional[float] = None,
         periodic_neighborlist: bool = True,
+        preprocessing_positions=None,
+        preprocessing_positions_unit=unit.nanometer,
         **_args,
     ):
         # Prepare inputs to the model
@@ -54,27 +56,34 @@ class ANI2xPotentialImpl(MLPotentialImpl):
         if atoms is not None:
             atoms = list(atoms)
             includedAtoms = [includedAtoms[i] for i in atoms]
-        species = jnp.array(
-            [atom.element.atomic_number for atom in includedAtoms], dtype=jnp.int32
-        )
-        indices = None if atoms is None else jnp.array(atoms, dtype=jnp.int32)
-        numSystemAtoms = system.getNumParticles()
-
-        periodic = (
-            topology.getPeriodicBoxVectors() is not None or system.usesPeriodicBoundaryConditions()
-        )
-        forcePeriodic = periodic and periodic_neighborlist
         model_ref = modelPath if modelPath is not None else self.modelPath
         if model_ref is None:
             if self.name in ANI2X_MODEL_NAMES:
                 model_ref = self.name
             else:
                 raise ValueError("modelPath must be provided for custom ANI2x models")
+        atomic_numbers = [atom.element.atomic_number for atom in includedAtoms]
         model = load_ani2x_model(
             model_ref,
-            atomic_numbers=species,
+            atomic_numbers=jnp.asarray(atomic_numbers, dtype=jnp.int32),
             neighbor_cell_atom_threshold=neighbor_cell_atom_threshold,
+            neighbor_cell_capacity_multiplier=neighbor_cell_capacity_multiplier,
         )
+        unsupported = [
+            z
+            for z in sorted(set(atomic_numbers))
+            if z >= len(model.species_to_index) or model.species_to_index[z] == 0 and z != 1
+        ]
+        if unsupported:
+            raise ValueError(f"ANI2x does not support atomic numbers {unsupported}.")
+        species = jnp.array(atomic_numbers, dtype=jnp.int32)
+        indices = None if atoms is None else jnp.array(atoms, dtype=jnp.int32)
+        numSystemAtoms = system.getNumParticles() or topology.getNumAtoms()
+
+        periodic = (
+            topology.getPeriodicBoxVectors() is not None or system.usesPeriodicBoundaryConditions()
+        )
+        forcePeriodic = periodic and periodic_neighborlist
         neighbor_cell_atom_threshold = int(model.neighbor_cell_atom_threshold)
         model_species = model.species_indices(species)
         allocation_box = None
@@ -86,9 +95,15 @@ class ANI2xPotentialImpl(MLPotentialImpl):
                 [vector.value_in_unit(unit.angstrom) for vector in box_vectors],
                 dtype=jnp.float32,
             )
+        allocation_positions = preprocessing_allocation_positions(
+            preprocessing_positions,
+            atoms,
+            preprocessing_positions_unit,
+        )
         radial_neighbor_list = allocate_neighbor_list(
             len(includedAtoms),
             allocation_box,
+            allocation_positions=allocation_positions,
             cell_atom_threshold=neighbor_cell_atom_threshold,
             cutoff=float(model.radial_cutoff),
             cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
@@ -97,6 +112,7 @@ class ANI2xPotentialImpl(MLPotentialImpl):
         angular_neighbor_list = allocate_neighbor_list(
             len(includedAtoms),
             allocation_box,
+            allocation_positions=allocation_positions,
             cell_atom_threshold=neighbor_cell_atom_threshold,
             cutoff=float(model.angular_cutoff),
             cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
@@ -157,16 +173,18 @@ def allocate_neighbor_list(
     num_atoms: int,
     allocation_box=None,
     *,
+    allocation_positions=None,
     cell_atom_threshold: int,
     cutoff: float,
     cell_capacity_multiplier: float,
     periodic: bool,
 ):
-    allocation_positions = neighbor_allocation_positions(
-        num_atoms,
-        dtype=jnp.float32,
-        periodic=periodic,
-    )
+    if allocation_positions is None:
+        raise ValueError("ANI2x JAX requires preprocessing_positions.")
+    if periodic:
+        if allocation_box is None:
+            raise ValueError("periodic neighbor-list allocation requires a box.")
+        allocation_positions = fractional_coordinates(allocation_positions, allocation_box)
     return get_neighbors(
         allocation_positions,
         allocation_box,
@@ -200,23 +218,22 @@ def _restricted_box_inverse(box):
     )
 
 
-def neighbor_allocation_positions(
-    num_atoms: int,
-    *,
-    dtype=jnp.float32,
-    periodic: bool,
+def preprocessing_allocation_positions(
+    preprocessing_positions,
+    atoms,
+    preprocessing_positions_unit,
 ):
-    if num_atoms <= 0:
-        return jnp.zeros((0, 3), dtype=dtype)
-    if not periodic:
-        return jnp.zeros((num_atoms, 3), dtype=dtype)
-
-    grid_size = max(1, math.ceil(num_atoms ** (1.0 / 3.0)))
-    atom_ids = jnp.arange(num_atoms, dtype=jnp.int32)
-    x = atom_ids % grid_size
-    y = (atom_ids // grid_size) % grid_size
-    z = atom_ids // (grid_size * grid_size)
-    return (jnp.stack((x, y, z), axis=-1).astype(dtype) + 0.5) / grid_size
+    if preprocessing_positions is None:
+        raise ValueError("ANI2x JAX requires preprocessing_positions.")
+    if hasattr(preprocessing_positions, "value_in_unit"):
+        positions = preprocessing_positions.value_in_unit(unit.angstrom)
+    else:
+        scale = preprocessing_positions_unit.conversion_factor_to(unit.angstrom)
+        positions = jnp.asarray(preprocessing_positions, dtype=jnp.float32) * scale
+    positions = jnp.asarray(positions, dtype=jnp.float32)
+    if atoms is not None:
+        positions = positions[jnp.asarray(atoms, dtype=jnp.int32)]
+    return positions
 
 
 def _energyANI(
