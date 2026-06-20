@@ -66,24 +66,51 @@ public:
 
     ~ScopedPrimaryContext() {
         if (active) {
-            cuCtxPopCurrent(nullptr);
-            cu.setAsCurrent();
+            try {
+                restore(false);
+            } catch (...) {
+            }
         }
     }
 
     /** Explicitly pop the primary context and restore OpenMM's context. */
     void pop() {
-        CUcontext popped;
-        check(cuCtxPopCurrent(&popped),
-                "Failed to pop the CUDA primary context after PJRT");
-        active = false;
-        if (popped != expectedContext)
-            throw OpenMM::OpenMMException(
-                    "JaxForce CUDA backend popped an unexpected CUDA context");
-        cu.setAsCurrent();
+        restore(true);
     }
 
 private:
+    void restore(bool throwOnError) {
+        CUcontext current;
+        CUresult result = cuCtxGetCurrent(&current);
+        if (result != CUDA_SUCCESS) {
+            if (throwOnError)
+                check(result, "Failed to get the current CUDA context after PJRT");
+            return;
+        }
+        if (current == expectedContext) {
+            CUcontext popped;
+            result = cuCtxPopCurrent(&popped);
+            if (result != CUDA_SUCCESS) {
+                if (throwOnError)
+                    check(result, "Failed to pop the CUDA primary context after PJRT");
+                return;
+            }
+            if (popped != expectedContext) {
+                if (throwOnError)
+                    throw OpenMM::OpenMMException(
+                            "JaxForce CUDA backend popped an unexpected CUDA context");
+                return;
+            }
+        } else if (current != cu.getContext()) {
+            if (throwOnError)
+                throw OpenMM::OpenMMException(
+                        "JaxForce CUDA backend found an unexpected CUDA context after PJRT");
+            return;
+        }
+        active = false;
+        cu.setAsCurrent();
+    }
+
     void check(CUresult result, const std::string& prefix) {
         if (result != CUDA_SUCCESS) {
             std::stringstream m;
@@ -101,4 +128,3 @@ private:
 } // namespace JaxPlugin
 
 #endif
-

@@ -1,8 +1,4 @@
-/* CUDA PJRT stream extension used by jax-cuda PJRT for external buffer handoff.
-
-   The core PJRT C API header is vendored directly from the XLA revision used by
-   jaxlib 0.10.1. This extension is not declared in that public header, so keep
-   the local declaration separate from the vendored file.
+/* CUDA PJRT stream extension used by PJRT for external buffer handoff.
 
    Upstream References:
    - C++ counterpart method: `xla::PjRtDevice::GetStreamForExternalReadyEvents` in `xla/pjrt/pjrt_client.h`
