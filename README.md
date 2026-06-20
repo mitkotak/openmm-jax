@@ -16,13 +16,14 @@ cmake --build build --target PythonInstall
 
 ## Supported Models
 
-Currently supporting inference only
+Currently supporting inference only. Except FeNNiX all other models are implemented from scratch
 
-- ANI2x (both single and ensemble)
 - FeNNix
-- MACE-OFF
+- ANI2x (single, ensemble)
+- MACE-OFF (S-23, M-24)
 - AIMNet2
-- AceFF
+- AceFF (1.1, 2.0)
+- OrbV3 (Omol conservative)
 
 ## Design Notes
 
