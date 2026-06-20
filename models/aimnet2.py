@@ -107,12 +107,14 @@ def safe_norm(x: Array, *, axis=-1, keepdims: bool = False, eps: float = 1.0e-24
 
 class MLP(eqx.Module):
     layers: list["Linear"]
+    sizes: tuple[int, ...] = eqx.field(static=True)
 
     def __init__(self, sizes: tuple[int, ...], *, dtype: Any = jnp.float32, key: Array):
+        self.sizes = tuple(int(size) for size in sizes)
         keys = jax.random.split(key, len(sizes) - 1)
         self.layers = [
             Linear(in_dim, out_dim, dtype=dtype, key=subkey)
-            for subkey, in_dim, out_dim in zip(keys, sizes[:-1], sizes[1:])
+            for subkey, in_dim, out_dim in zip(keys, self.sizes[:-1], self.sizes[1:])
         ]
 
     def __call__(self, x: Array, *, last_linear: bool = True) -> Array:
@@ -724,7 +726,6 @@ class AIMNet2Model(eqx.Module):
 
             total_energy = local_energy + coulomb_energy + dispersion_energy
             return total_energy.astype(jnp.float32)
-
 
 def load_aimnet2_model(
     model: str | PathLike = "aimnet2-jax",

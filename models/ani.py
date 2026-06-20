@@ -477,41 +477,6 @@ class ANI2x(eqx.Module):
             )
         )
 
-
-def save_ani2x_model(path: str | PathLike, model: ANI2x):
-    if model.num_active_species != len(model.species_lookup) or model.num_active_pairs != len(
-        model.pair_lookup
-    ):
-        raise ValueError("save_ani2x_model requires a model loaded with the full ANI AEV basis.")
-    config = {
-        "angular_basis_width": model.angular_basis_width,
-        "angular_cutoff": model.angular_cutoff,
-        "angular_eta": model.angular_eta,
-        "angular_radial_shifts": list(model.angular_radial_shifts),
-        "angular_shifts": list(model.angular_shifts),
-        "celu_alpha": model.celu_alpha,
-        "neighbor_cell_atom_threshold": model.neighbor_cell_atom_threshold,
-        "neighbor_cell_capacity_multiplier": model.neighbor_cell_capacity_multiplier,
-        "network_sizes": [
-            int(model.layer_weights[0].shape[2]),
-            *(int(weights.shape[3]) for weights in model.layer_weights),
-        ],
-        "num_models": model.num_models,
-        "num_species": len(model.species_lookup),
-        "num_species_pairs": len(model.pair_lookup),
-        "pair_to_index": [list(row) for row in model.pair_to_index],
-        "radial_cutoff": model.radial_cutoff,
-        "radial_divisions": model.radial_divisions,
-        "radial_eta": model.radial_eta,
-        "radial_shifts": list(model.radial_shifts),
-        "species_to_index": list(model.species_to_index),
-        "zeta": model.zeta,
-    }
-    with Path(path).open("wb") as handle:
-        handle.write((json.dumps(config, sort_keys=True) + "\n").encode())
-        eqx.tree_serialise_leaves(handle, model)
-
-
 def load_ani2x_model(
     model: str | PathLike = "ani2x-jax-ensemble",
     *,

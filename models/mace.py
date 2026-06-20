@@ -542,38 +542,6 @@ class MACEModel(eqx.Module):
         )
 
 
-def save_model(
-    path: str | PathLike,
-    model: MACEModel,
-    *,
-    name: str | None = None,
-    config: dict[str, Any] | None = None,
-) -> None:
-    if not model.layers:
-        raise ValueError("Cannot save a MACE model with no layers.")
-    model_config = dict(config) if config is not None else {
-        "name": model.name if name is None else name,
-        "num_species": model.num_species,
-        "cutoff": model.cutoff,
-        "num_layers": len(model.layers),
-        "num_features": model.num_features,
-        "correlation": 3,
-        "num_radial_basis": model.num_radial_basis,
-        "avg_num_neighbors": 1.0 / float(model.layers[0].epsilon),
-        "hidden_has_vector": model.hidden_has_vector,
-        "radial_polynomial_p": model.radial_polynomial_p,
-        "silu_normalization": model.silu_normalization,
-        "neighbor_cell_atom_threshold": model.neighbor_cell_atom_threshold,
-        "neighbor_cell_capacity_multiplier": model.neighbor_cell_capacity_multiplier,
-        "sh_dims": list(model.sh_dims),
-        "sh_starts": list(model.sh_starts),
-        "sh_monomials": [list(row) for row in model.sh_monomials],
-    }
-    with Path(path).open("wb") as handle:
-        handle.write((json.dumps(model_config, sort_keys=True) + "\n").encode())
-        eqx.tree_serialise_leaves(handle, model)
-
-
 def load_model(
     model: str | PathLike = "mace-off-m(24)",
     *,
