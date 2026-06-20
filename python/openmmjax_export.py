@@ -103,14 +103,15 @@ def export_jax_model(
     energy_function: Callable[..., Any],
     energy_and_forces_function: Callable[..., tuple[Any, Any]],
     periodic: bool,
+    input_dtype: Any = jnp.float32,
 ) -> tuple[str, str, str, str]:
     """Export full-system OpenMM-shaped JAX callables for JaxForce."""
     platforms = ("cuda",)
 
-    positions_shape = jax.ShapeDtypeStruct((int(num_system_atoms), 3), jnp.float32)
+    positions_shape = jax.ShapeDtypeStruct((int(num_system_atoms), 3), input_dtype)
     export_args: tuple[Any, ...]
     if periodic:
-        box_vectors_shape = jax.ShapeDtypeStruct((3, 3), jnp.float32)
+        box_vectors_shape = jax.ShapeDtypeStruct((3, 3), input_dtype)
         export_args = positions_shape, box_vectors_shape
     else:
         export_args = (positions_shape,)

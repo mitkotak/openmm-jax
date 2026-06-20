@@ -2,11 +2,58 @@
 #include "PjrtBufferInterop.h"
 #include "PjrtLoadedExecutable.h"
 #include <array>
+#include <sstream>
 #include <stdexcept>
 #include <utility>
 
 using namespace JaxPlugin;
 using namespace std;
+
+namespace {
+
+bool parseStablehloFirstInputUsesDoublePrecisionReal(const string& mlir, const string& label) {
+    size_t mainFunction = mlir.find("@main");
+    if (mainFunction == string::npos)
+        throw runtime_error("JaxForce PJRT: " + label + " StableHLO program has no @main function");
+    size_t argumentList = mlir.find('(', mainFunction);
+    if (argumentList == string::npos)
+        throw runtime_error("JaxForce PJRT: " + label + " StableHLO @main function has no arguments");
+    size_t tensorStart = mlir.find("tensor<", argumentList);
+    if (tensorStart == string::npos)
+        throw runtime_error(
+                "JaxForce PJRT: could not determine " + label +
+                " StableHLO input precision; expected a tensor argument");
+    size_t tensorEnd = mlir.find('>', tensorStart);
+    if (tensorEnd == string::npos)
+        throw runtime_error(
+                "JaxForce PJRT: could not determine " + label +
+                " StableHLO input precision; malformed tensor argument");
+
+    string tensorType = mlir.substr(tensorStart, tensorEnd - tensorStart + 1);
+    if (tensorType.find("xf64") != string::npos)
+        return true;
+    if (tensorType.find("xf32") != string::npos)
+        return false;
+    throw runtime_error(
+            "JaxForce PJRT: unsupported " + label +
+            " StableHLO input precision in " + tensorType +
+            " (expected f32 or f64 positions)");
+}
+
+const char* precisionName(bool useDoublePrecisionReal) {
+    return useDoublePrecisionReal ? "double/f64" : "single-or-mixed/f32";
+}
+
+void checkStablehloPrecisionMatches(const string& label, bool expected, bool actual) {
+    if (expected == actual)
+        return;
+    throw runtime_error(
+            "JaxForce PJRT: StableHLO input precision mismatch between programs: " +
+            label + " uses " + precisionName(actual) + " positions, but earlier "
+            "programs use " + precisionName(expected) + " positions");
+}
+
+} // namespace
 
 PjrtRuntime::~PjrtRuntime() {
     try { close(); } catch (...) {}
@@ -35,6 +82,7 @@ void PjrtRuntime::close() {
     energyExecutable.reset();
     energyAndForcesExecutable.reset();
     session.close();
+    stablehloUsesDoublePrecisionReal = false;
 }
 
 void PjrtRuntime::initialize(const string& pluginPath, const string& forceMlir,
@@ -45,6 +93,17 @@ void PjrtRuntime::initialize(const string& pluginPath, const string& forceMlir,
     if (forceMlir.empty() || energyMlir.empty() || energyAndForcesMlir.empty())
         throw runtime_error(
                 "JaxForce PJRT: force, energy, and energy+forces StableHLO programs must all be provided");
+    bool forceUsesDoublePrecisionReal =
+            parseStablehloFirstInputUsesDoublePrecisionReal(forceMlir, "force");
+    bool energyUsesDoublePrecisionReal =
+            parseStablehloFirstInputUsesDoublePrecisionReal(energyMlir, "energy");
+    bool energyAndForcesUsesDoublePrecisionReal =
+            parseStablehloFirstInputUsesDoublePrecisionReal(energyAndForcesMlir, "energy+forces");
+    checkStablehloPrecisionMatches("energy", forceUsesDoublePrecisionReal,
+            energyUsesDoublePrecisionReal);
+    checkStablehloPrecisionMatches("energy+forces", forceUsesDoublePrecisionReal,
+            energyAndForcesUsesDoublePrecisionReal);
+
     PjrtClientSession newSession;
     newSession.initialize(pluginPath);
 
@@ -59,6 +118,7 @@ void PjrtRuntime::initialize(const string& pluginPath, const string& forceMlir,
     forceExecutable = std::move(newForceExecutable);
     energyExecutable = std::move(newEnergyExecutable);
     energyAndForcesExecutable = std::move(newEnergyAndForcesExecutable);
+    stablehloUsesDoublePrecisionReal = forceUsesDoublePrecisionReal;
 }
 
 
@@ -89,22 +149,39 @@ OpenMmPjrtExecutionResult PjrtRuntime::execute(
         choice = {energyExecutable.get(), 1, -1, 0,
                 "energy", "OpenMM-JAX energy"};
 
+    if (pjrtInputs.useDoublePrecisionReal != stablehloUsesDoublePrecisionReal) {
+        stringstream message;
+        message << "JaxForce PJRT: OpenMM CUDA context precision does not match "
+                << "the JaxForce StableHLO input precision. OpenMM is providing "
+                << precisionName(pjrtInputs.useDoublePrecisionReal)
+                << " position buffers, but the JaxForce was exported for "
+                << precisionName(stablehloUsesDoublePrecisionReal)
+                << " position buffers. OpenMM-JAX does not implicitly convert "
+                << "between f32 and f64 buffers; configure both sides consistently "
+                << "(for example, pass precision=\"double\" or use_float64=True "
+                << "when using CUDA Precision=\"double\", or use CUDA "
+                << "Precision=\"mixed\"/\"single\" with an f32 JaxForce).";
+        throw runtime_error(message.str());
+    }
+
     CUstream inputStream = session.getStreamForExternalReadyEvents(pjrtInputs.deviceIndex);
     if (pjrtInputs.inputReadyEvent != nullptr)
         waitOnStream(inputStream, pjrtInputs.inputReadyEvent);
 
     std::array<PjrtBufferPtr, 2> inputBuffers;
     size_t numInputs = 0;
+    PJRT_Buffer_Type inputType = pjrtInputs.useDoublePrecisionReal ?
+            PJRT_Buffer_Type_F64 : PJRT_Buffer_Type_F32;
     int64_t positionDims[2] = {pjrtInputs.numParticles, 3};
     inputBuffers[numInputs++] = createViewOfDeviceBuffer(session,
             pjrtInputs.positions, positionDims, 2,
-            PJRT_Buffer_Type_F32, inputStream, pjrtInputs.deviceIndex,
+            inputType, inputStream, pjrtInputs.deviceIndex,
             string(choice.label) + " positions");
     if (pjrtInputs.usePeriodic) {
         int64_t boxDims[2] = {3, 3};
         inputBuffers[numInputs++] = createViewOfDeviceBuffer(session,
                 pjrtInputs.boxVectors, boxDims, 2,
-                PJRT_Buffer_Type_F32, inputStream, pjrtInputs.deviceIndex,
+                inputType, inputStream, pjrtInputs.deviceIndex,
                 string(choice.label) + " boxVectors");
     }
 
@@ -119,15 +196,20 @@ OpenMmPjrtExecutionResult PjrtRuntime::execute(
         size_t index = static_cast<size_t>(choice.energyOutputIndex);
         CUdeviceptr energyPointer = getOpaqueDeviceMemoryDataPointer(session,
                 outputBuffers[index], string(choice.label) + " energy");
+        double energyDouble = 0.0;
         float energyFloat = 0.0f;
+        void* energyHost = pjrtInputs.useDoublePrecisionReal ?
+                static_cast<void*>(&energyDouble) : static_cast<void*>(&energyFloat);
+        size_t energySize = pjrtInputs.useDoublePrecisionReal ? sizeof(double) : sizeof(float);
         CUresult copyResult = cuMemcpyDtoHAsync(
-                &energyFloat, energyPointer, sizeof(float), pjrtInputs.stream);
+                energyHost, energyPointer, energySize, pjrtInputs.stream);
         if (copyResult != CUDA_SUCCESS)
             throw runtime_error("JaxForce PJRT: failed to copy energy scalar from device");
         CUresult syncResult = cuStreamSynchronize(pjrtInputs.stream);
         if (syncResult != CUDA_SUCCESS)
             throw runtime_error("JaxForce PJRT: failed to synchronize energy scalar copy");
-        result.energy = static_cast<double>(energyFloat);
+        result.energy = pjrtInputs.useDoublePrecisionReal ?
+                energyDouble : static_cast<double>(energyFloat);
         outputBuffers[index].reset();
     }
 

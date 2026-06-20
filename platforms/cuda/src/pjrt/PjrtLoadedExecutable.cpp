@@ -1,12 +1,23 @@
 #include "PjrtLoadedExecutable.h"
 #include <array>
 #include <stdexcept>
+#include <sstream>
 
 using namespace JaxPlugin;
 using namespace std;
 
 void JaxPlugin::validateRequiredPjrtApi(const PJRT_Api* api) {
-    if (api == nullptr ||
+    if (api == nullptr)
+        throw runtime_error("JaxForce PJRT: plugin API is missing required compile/execute entry points");
+    size_t requiredSize = PJRT_STRUCT_SIZE(PJRT_Api, PJRT_Client_CreateViewOfDeviceBuffer);
+    if (api->struct_size < requiredSize) {
+        stringstream message;
+        message << "JaxForce PJRT: plugin API table is too old for OpenMM-JAX "
+                << "CUDA interop (plugin struct_size=" << api->struct_size
+                << ", required at least " << requiredSize << ")";
+        throw runtime_error(message.str());
+    }
+    if (
             api->PJRT_Client_Compile == nullptr ||
             api->PJRT_Client_Destroy == nullptr ||
             api->PJRT_Client_CreateViewOfDeviceBuffer == nullptr ||

@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 
+struct PJRT_Stream_Extension;
+
 namespace JaxPlugin {
 
 class PjrtClientSession {

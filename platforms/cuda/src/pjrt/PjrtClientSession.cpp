@@ -1,5 +1,6 @@
 #include "PjrtClientSession.h"
 #include "PjrtLoadedExecutable.h"
+#include "pjrt_cuda_stream_extension.h"
 #include <array>
 #include <cstring>
 #include <exception>

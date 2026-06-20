@@ -1,11 +1,44 @@
 #include "PjrtPlugin.h"
 #include "PjrtHandles.h"
+#include <cstddef>
 #include <dlfcn.h>
 #include <stdexcept>
+#include <sstream>
 #include <utility>
 
 using namespace JaxPlugin;
 using namespace std;
+
+namespace {
+
+using GetPjrtApiFn = const PJRT_Api*();
+
+void requireApiField(const PJRT_Api* api, size_t fieldEnd, const char* fieldName) {
+    if (api == nullptr || api->struct_size < fieldEnd) {
+        stringstream message;
+        message << "JaxForce PJRT: plugin API table is too old; missing "
+                << fieldName << " (plugin struct_size="
+                << (api == nullptr ? 0 : api->struct_size)
+                << ", required at least " << fieldEnd << ")";
+        throw runtime_error(message.str());
+    }
+}
+
+void validateApiHeader(const PJRT_Api* api) {
+    if (api == nullptr)
+        throw runtime_error("JaxForce PJRT: GetPjrtApi returned null");
+    requireApiField(api, PJRT_STRUCT_SIZE(PJRT_Api, pjrt_api_version),
+            "pjrt_api_version");
+    if (api->pjrt_api_version.major_version != PJRT_API_MAJOR) {
+        stringstream message;
+        message << "JaxForce PJRT: incompatible PJRT C API major version "
+                << api->pjrt_api_version.major_version << " from plugin; "
+                << "this build expects " << PJRT_API_MAJOR;
+        throw runtime_error(message.str());
+    }
+}
+
+} // namespace
 
 PjrtPluginLibrary::PjrtPluginLibrary() : library(nullptr), api(nullptr) {
 }
@@ -43,8 +76,9 @@ void PjrtPluginLibrary::open(const string& path) {
         if (getPjrtApi == nullptr)
             throw runtime_error("JaxForce PJRT: plugin is missing GetPjrtApi");
         api = getPjrtApi();
-        if (api == nullptr)
-            throw runtime_error("JaxForce PJRT: GetPjrtApi returned null");
+        validateApiHeader(api);
+        requireApiField(api, PJRT_STRUCT_SIZE(PJRT_Api, PJRT_Client_Devices),
+                "PJRT_Client_Devices");
         if (api->PJRT_Client_Create == nullptr || api->PJRT_Client_Devices == nullptr)
             throw runtime_error("JaxForce PJRT: plugin API is missing required client entry points");
         if (api->PJRT_Plugin_Initialize != nullptr) {

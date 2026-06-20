@@ -16,8 +16,6 @@ from jax import Array
 from jax.scipy.special import erfc
 from jax_md import partition, space
 
-jax.config.update("jax_enable_x64", True)
-
 AIMNET2_MODEL_PATHS = {
     "aimnet2-jax": Path(__file__).resolve().with_name("aimnet2.eqx"),
 }
@@ -373,7 +371,15 @@ def _dsf_coulomb_dense(
     j_dsf = j_dsf - c2 + (d - rc) * (c3 + c4)
     q_ij = charges[:, None] * charges[safe_neighbors]
     e = coulomb_factor * (q_ij * j_dsf).astype(jnp.float64)
-    return jnp.sum(jnp.where(edge_mask, e, 0.0))
+    pair_energy = jnp.sum(jnp.where(edge_mask, e, 0.0))
+    self_energy = (
+        -2.0
+        * coulomb_factor
+        * float(alpha)
+        / jnp.sqrt(jnp.asarray(jnp.pi, dtype=positions.dtype))
+        * jnp.sum((charges * charges).astype(jnp.float64))
+    )
+    return pair_energy + self_energy
 
 
 def _simple_coulomb_all_pairs(
@@ -581,7 +587,8 @@ class AIMNet2Model(eqx.Module):
         self.mlp1 = MLP(config["mlp1_sizes"], dtype=dtype, key=keys[1])
         self.mlp2 = MLP(config["mlp2_sizes"], dtype=dtype, key=keys[2])
         self.energy_mlp = MLP(config["energy_sizes"], dtype=dtype, key=keys[3])
-        self.atomic_shifts = jnp.zeros((64,), dtype=jnp.float64)
+        with jax.enable_x64(True):
+            self.atomic_shifts = jnp.zeros((64,), dtype=jnp.float64)
         if d3_params is None and config["has_d3_params"]:
             try:
                 c6ab_shape = tuple(int(v) for v in config["d3_c6ab_shape"])
@@ -681,41 +688,50 @@ class AIMNet2Model(eqx.Module):
             lr_neighbor_idx = lr_neighbors.idx
 
         box_vectors = box_vectors if periodic else None
-        node_energies, partial_charges, r_ij, neighbors, edge_mask = self.node_energies_and_charges(
-                                                                    positions,
-                                                                    species,
-                                                                    neighbor_idx=neighbor_idx,
-                                                                    total_charge=total_charge,
-                                                                    box_vectors=box_vectors,
-                                                                )
-        local_energy = jnp.sum(node_energies)
-        coulomb_energy = aimnet2_coulomb_energy(
-            self,
-            partial_charges,
-            positions,
-            r_ij,
-            neighbors,
-            edge_mask,
-            lr_neighbor_idx,
-            box_vectors,
-        )
-        dispersion_energy = d3bj_energy_neighbors(
-            positions,
-            d3_data,
-            lr_neighbor_idx,
-            box_vectors=box_vectors,
-            cutoff=float(self.lr_cutoff),
-            smoothing_fraction=float(self.d3_smoothing_fraction),
-        ).astype(jnp.float64)
+        with jax.enable_x64(True):
+            (
+                node_energies,
+                partial_charges,
+                r_ij,
+                neighbors,
+                edge_mask,
+            ) = self.node_energies_and_charges(
+                positions,
+                species,
+                neighbor_idx=neighbor_idx,
+                total_charge=total_charge,
+                box_vectors=box_vectors,
+            )
+            local_energy = jnp.sum(node_energies)
+            coulomb_energy = aimnet2_coulomb_energy(
+                self,
+                partial_charges,
+                positions,
+                r_ij,
+                neighbors,
+                edge_mask,
+                lr_neighbor_idx,
+                box_vectors,
+            )
+            dispersion_energy = d3bj_energy_neighbors(
+                positions,
+                d3_data,
+                lr_neighbor_idx,
+                box_vectors=box_vectors,
+                cutoff=float(self.lr_cutoff),
+                smoothing_fraction=float(self.d3_smoothing_fraction),
+            ).astype(jnp.float64)
 
-        total_energy = local_energy + coulomb_energy + dispersion_energy
-        return total_energy.astype(jnp.float32)
+            total_energy = local_energy + coulomb_energy + dispersion_energy
+            return total_energy.astype(jnp.float32)
 
 
 def load_aimnet2_model(
     model: str | PathLike = "aimnet2-jax",
     *,
     model_path: str | PathLike | None = None,
+    neighbor_cell_atom_threshold: int | None = None,
+    neighbor_cell_capacity_multiplier: float | None = None,
 ) -> AIMNet2Model:
     if model_path is not None:
         path = Path(model_path)
@@ -728,6 +744,13 @@ def load_aimnet2_model(
     if not path.is_file():
         raise FileNotFoundError(f"AIMNet2 .eqx checkpoint not found: {path}")
     with path.open("rb") as handle:
-        config = json.loads(handle.readline().decode())
-        template = AIMNet2Model(config=config, dtype=jnp.float32)
-        return eqx.tree_deserialise_leaves(handle, template)
+        config = dict(json.loads(handle.readline().decode()))
+        if neighbor_cell_atom_threshold is not None:
+            config["neighbor_cell_atom_threshold"] = int(neighbor_cell_atom_threshold)
+        if neighbor_cell_capacity_multiplier is not None:
+            config["neighbor_cell_capacity_multiplier"] = float(
+                neighbor_cell_capacity_multiplier
+            )
+        with jax.enable_x64(True):
+            template = AIMNet2Model(config=config, dtype=jnp.float32)
+            return eqx.tree_deserialise_leaves(handle, template)

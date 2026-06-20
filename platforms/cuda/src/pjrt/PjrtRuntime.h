@@ -19,6 +19,7 @@ struct OpenMmPjrtInputs {
     CUstream stream = nullptr;        
     bool usePeriodic = false;         
     CUevent inputReadyEvent = nullptr;
+    bool useDoublePrecisionReal = false;
 };
 
 class OpenMmPjrtForceOutput {
@@ -70,6 +71,7 @@ private:
     PjrtLoadedExecutablePtr energyExecutable;
     PjrtLoadedExecutablePtr energyAndForcesExecutable;
     OpenMmPjrtOutputLifetime outputLifetime;
+    bool stablehloUsesDoublePrecisionReal = false;
 };
 
 } // namespace JaxPlugin

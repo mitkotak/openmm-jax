@@ -33,20 +33,36 @@ class FeNNixPotentialImplFactory(MLPotentialImplFactory):
 
 class FeNNixPotentialImpl(MLPotentialImpl):
     KNOWN_MODELS = {
+        "fennix-bio1-small": (
+            "https://raw.githubusercontent.com/FeNNol-tools/FeNNol-PMC/main/"
+            "FENNIX-BIO1/v1.0/fennix-bio1S.fnx"
+        ),
+        "fennix-bio1-medium": (
+            "https://raw.githubusercontent.com/FeNNol-tools/FeNNol-PMC/main/"
+            "FENNIX-BIO1/v1.0/fennix-bio1M.fnx"
+        ),
+        "fennix-bio1-small-finetune-ions": (
+            "https://raw.githubusercontent.com/FeNNol-tools/FeNNol-PMC/main/"
+            "FENNIX-BIO1/v1.0-finetuneIons/fennix-bio1S-finetuneIons.fnx"
+        ),
+        "fennix-bio1-medium-finetune-ions": (
+            "https://raw.githubusercontent.com/FeNNol-tools/FeNNol-PMC/main/"
+            "FENNIX-BIO1/v1.0-finetuneIons/fennix-bio1M-finetuneIons.fnx"
+        ),
         "fennix-bio1-small-jax": (
-            "https://github.com/FeNNol-tools/FeNNol-PMC/raw/refs/heads/main/"
+            "https://raw.githubusercontent.com/FeNNol-tools/FeNNol-PMC/main/"
             "FENNIX-BIO1/v1.0/fennix-bio1S.fnx"
         ),
         "fennix-bio1-medium-jax": (
-            "https://github.com/FeNNol-tools/FeNNol-PMC/raw/refs/heads/main/"
+            "https://raw.githubusercontent.com/FeNNol-tools/FeNNol-PMC/main/"
             "FENNIX-BIO1/v1.0/fennix-bio1M.fnx"
         ),
         "fennix-bio1-small-finetune-ions-jax": (
-            "https://github.com/FeNNol-tools/FeNNol-PMC/raw/refs/heads/main/"
+            "https://raw.githubusercontent.com/FeNNol-tools/FeNNol-PMC/main/"
             "FENNIX-BIO1/v1.0-finetuneIons/fennix-bio1S-finetuneIons.fnx"
         ),
         "fennix-bio1-medium-finetune-ions-jax": (
-            "https://github.com/FeNNol-tools/FeNNol-PMC/raw/refs/heads/main/"
+            "https://raw.githubusercontent.com/FeNNol-tools/FeNNol-PMC/main/"
             "FENNIX-BIO1/v1.0-finetuneIons/fennix-bio1M-finetuneIons.fnx"
         ),
     }
@@ -62,6 +78,7 @@ class FeNNixPotentialImpl(MLPotentialImpl):
         atoms: Optional[Iterable[int]],
         forceGroup: int,
         charge: int = 0,
+        precision: str | None = None,
         gpu_preprocessing: bool = True,
         use_float64: bool = False,
         matmul_prec: Optional[str] = "highest",
@@ -75,144 +92,168 @@ class FeNNixPotentialImpl(MLPotentialImpl):
         import fennol
         import numpy as np
 
-        if matmul_prec is not None:
-            jax.config.update("jax_default_matmul_precision", matmul_prec)
+        if precision is not None:
+            if precision == "single":
+                use_float64 = False
+            elif precision == "double":
+                use_float64 = True
+            else:
+                raise ValueError(
+                    f"Invalid precision {precision!r} (expected 'single' or 'double')"
+                )
+        if preprocessing_positions is None:
+            raise ValueError(
+                "FeNNix JAX requires preprocessing_positions to initialize "
+                "fixed preprocessing shapes for export."
+            )
+        with jax.enable_x64(use_float64):
+            if matmul_prec is not None:
+                jax.config.update("jax_default_matmul_precision", matmul_prec)
 
-        # Load the model.
-        downloaded_model_path = None
-        if self.modelPath is not None:
-            modelPath = self.modelPath
-        elif self.name in FeNNixPotentialImpl.KNOWN_MODELS:
-            url = FeNNixPotentialImpl.KNOWN_MODELS[self.name]
-            tmp_file = tempfile.NamedTemporaryFile(suffix=".fnx", delete=False)
-            downloaded_model_path = tmp_file.name
-            tmp_file.close()
-            urllib.request.urlretrieve(url, downloaded_model_path)
-            modelPath = downloaded_model_path
-        else:
-            raise ValueError("modelPath must be provided for custom FeNNix models")
+            # Load the model.
+            downloaded_model_path = None
+            if self.modelPath is not None:
+                modelPath = self.modelPath
+            elif self.name in FeNNixPotentialImpl.KNOWN_MODELS:
+                url = FeNNixPotentialImpl.KNOWN_MODELS[self.name]
+                tmp_file = tempfile.NamedTemporaryFile(suffix=".fnx", delete=False)
+                downloaded_model_path = tmp_file.name
+                tmp_file.close()
+                urllib.request.urlretrieve(url, downloaded_model_path)
+                modelPath = downloaded_model_path
+            else:
+                raise ValueError("modelPath must be provided for custom FeNNix models")
 
-        try:
-            model = fennol.FENNIX.load(modelPath, **args)
-        finally:
-            if downloaded_model_path is not None:
-                os.unlink(downloaded_model_path)
-        if energy_terms is not None:
-            model.set_energy_terms(energy_terms)
-        energyScale = (
-            unit.hartree / model.Ha_to_model_energy * unit.AVOGADRO_CONSTANT_NA
-        ).value_in_unit(unit.kilojoule_per_mole)
-        forceScale = (energyScale / unit.angstrom).value_in_unit(unit.nanometer**-1)
+            try:
+                model = fennol.FENNIX.load(modelPath, **args)
+            finally:
+                if downloaded_model_path is not None:
+                    os.unlink(downloaded_model_path)
+            if energy_terms is not None:
+                model.set_energy_terms(energy_terms)
+            energyScale = (
+                unit.hartree / model.Ha_to_model_energy * unit.AVOGADRO_CONSTANT_NA
+            ).value_in_unit(unit.kilojoules_per_mole)
+            forceScale = (energyScale / unit.angstrom).value_in_unit(unit.nanometer**-1)
 
-        # Get the atoms that should be included.
-        includedAtoms = list(topology.atoms())
-        if atoms is not None:
-            atoms = list(atoms)
-            includedAtoms = [includedAtoms[i] for i in atoms]
-        species = jnp.array(
-            [atom.element.atomic_number for atom in includedAtoms], dtype=jnp.int32
-        )
-        atom_indices_np = None if atoms is None else np.array(atoms, dtype=np.int32)
-        indices = (
-            None
-            if atom_indices_np is None
-            else jnp.array(atom_indices_np, dtype=jnp.int32)
-        )
-        numSystemAtoms = system.getNumParticles()
+            # Get the atoms that should be included.
+            includedAtoms = list(topology.atoms())
+            if atoms is not None:
+                atoms = list(atoms)
+                includedAtoms = [includedAtoms[i] for i in atoms]
+            species = jnp.array(
+                [atom.element.atomic_number for atom in includedAtoms], dtype=jnp.int32
+            )
+            atom_indices_np = None if atoms is None else np.array(atoms, dtype=np.int32)
+            indices = (
+                None
+                if atom_indices_np is None
+                else jnp.array(atom_indices_np, dtype=jnp.int32)
+            )
+            numSystemAtoms = system.getNumParticles() or topology.getNumAtoms()
 
-        inputs = dict(
-            species=species,
-            natoms=jnp.array([species.size], dtype=jnp.int32),
-            batch_index=jnp.zeros(species.size, dtype=jnp.int32),
-            total_charge=charge,
-        )
+            inputs = dict(
+                species=species,
+                natoms=jnp.array([species.size], dtype=jnp.int32),
+                batch_index=jnp.zeros(species.size, dtype=jnp.int32),
+                total_charge=charge,
+            )
 
-        periodic = (
-            topology.getPeriodicBoxVectors() is not None or system.usesPeriodicBoundaryConditions()
-        )
-        forcePeriodic = periodic and periodic_neighborlist
-        if forcePeriodic and minimum_image:
-            inputs["flags"] = {"minimum_image": None}
-        dtype = np.float32
+            periodic = (
+                topology.getPeriodicBoxVectors() is not None
+                or system.usesPeriodicBoundaryConditions()
+            )
+            forcePeriodic = periodic and periodic_neighborlist
+            if forcePeriodic and minimum_image:
+                inputs["flags"] = {"minimum_image": None}
+            dtype = np.float64 if use_float64 else np.float32
 
-        # Prepare static inputs and initialize preprocessing state on CPU
-        staticInputs = {
-            key: np.asarray(value) if isinstance(value, jax.Array) else value
-            for key, value in inputs.items()
-        }
-        preproc_coordinates = _initial_preprocessing_coordinates_angstrom(
-            preprocessing_positions,
-            dtype=dtype,
-            indices=atom_indices_np,
-            system_shape=(numSystemAtoms, 3),
-            fallback_shape=(species.size, 3),
-            positions_unit=preprocessing_positions_unit,
-        )
-        preprocInputs = {**staticInputs, "coordinates": preproc_coordinates}
-        if forcePeriodic:
-            box_vectors = topology.getPeriodicBoxVectors()
-            if box_vectors is None:
-                box_vectors = system.getDefaultPeriodicBoxVectors()
-            cells_ang = np.asarray(
-                [vector.value_in_unit(unit.angstrom) for vector in box_vectors],
+            # Prepare static inputs and initialize preprocessing state on CPU
+            staticInputs = {
+                key: np.asarray(value) if isinstance(value, jax.Array) else value
+                for key, value in inputs.items()
+            }
+            preproc_coordinates = _initial_preprocessing_coordinates_angstrom(
+                preprocessing_positions,
                 dtype=dtype,
-            ).reshape(1, 3, 3)
-            preprocInputs["cells"] = cells_ang
-            preprocInputs["reciprocal_cells"] = np.linalg.inv(cells_ang)
-        preprocState, _ = model.preprocessing.init_with_output(preprocInputs)
+                indices=atom_indices_np,
+                system_shape=(numSystemAtoms, 3),
+                fallback_shape=(species.size, 3),
+                positions_unit=preprocessing_positions_unit,
+            )
+            preprocInputs = {**staticInputs, "coordinates": preproc_coordinates}
+            if forcePeriodic:
+                box_vectors = topology.getPeriodicBoxVectors()
+                if box_vectors is None:
+                    box_vectors = system.getDefaultPeriodicBoxVectors()
+                cells_ang = np.asarray(
+                    [vector.value_in_unit(unit.angstrom) for vector in box_vectors],
+                    dtype=dtype,
+                ).reshape(1, 3, 3)
+                preprocInputs["cells"] = cells_ang
+                preprocInputs["reciprocal_cells"] = np.linalg.inv(cells_ang)
+            preprocState, _ = model.preprocessing.init_with_output(preprocInputs)
 
-        energy_fn = partial(
-            _energyFeNNix,
-            model=model,
-            static_inputs=staticInputs,
-            preproc_state=preprocState,
-            pbc=forcePeriodic,
-            energy_scale=energyScale,
-        )
-        energy_and_forces_fn = partial(
-            _energyAndForcesFeNNix,
-            model=model,
-            static_inputs=staticInputs,
-            preproc_state=preprocState,
-            pbc=forcePeriodic,
-            energy_scale=energyScale,
-            force_scale=forceScale,
-        )
+            energy_fn = partial(
+                _energyFeNNix,
+                model=model,
+                static_inputs=staticInputs,
+                preproc_state=preprocState,
+                pbc=forcePeriodic,
+                energy_scale=energyScale,
+                coordinate_dtype=jnp.float64 if use_float64 else jnp.float32,
+            )
+            energy_and_forces_fn = partial(
+                _energyAndForcesFeNNix,
+                model=model,
+                static_inputs=staticInputs,
+                preproc_state=preprocState,
+                pbc=forcePeriodic,
+                energy_scale=energyScale,
+                force_scale=forceScale,
+                coordinate_dtype=jnp.float64 if use_float64 else jnp.float32,
+            )
 
-        def _energy_kjmol(positions_nm, box_vectors_nm=None):
-            selected_positions = positions_nm if indices is None else positions_nm[indices]
-            return energy_fn((selected_positions, box_vectors_nm))
+            def _energy_kjmol(positions_nm, box_vectors_nm=None):
+                selected_positions = positions_nm if indices is None else positions_nm[indices]
+                return energy_fn((selected_positions, box_vectors_nm))
 
-        def _energy_and_forces_kjmol(positions_nm, box_vectors_nm=None):
-            selected_positions = positions_nm if indices is None else positions_nm[indices]
-            energy, forces = energy_and_forces_fn((selected_positions, box_vectors_nm))
-            if indices is not None:
-                forces = jnp.zeros_like(positions_nm).at[indices].set(forces)
-            return energy, forces
+            def _energy_and_forces_kjmol(positions_nm, box_vectors_nm=None):
+                selected_positions = positions_nm if indices is None else positions_nm[indices]
+                energy, forces = energy_and_forces_fn((selected_positions, box_vectors_nm))
+                if indices is not None:
+                    forces = jnp.zeros_like(positions_nm).at[indices].set(forces)
+                return energy, forces
 
-        def _forces_kjmol(positions_nm, box_vectors_nm=None):
-            _energy, forces = _energy_and_forces_kjmol(positions_nm, box_vectors_nm)
-            return forces
+            def _forces_kjmol(positions_nm, box_vectors_nm=None):
+                _energy, forces = _energy_and_forces_kjmol(positions_nm, box_vectors_nm)
+                return forces
 
-        force_mlir, energy_mlir, energy_and_forces_mlir, compile_options_base64 = export_jax_model(
-            num_system_atoms=numSystemAtoms,
-            force_function=_forces_kjmol,
-            energy_function=_energy_kjmol,
-            energy_and_forces_function=_energy_and_forces_kjmol,
-            periodic=forcePeriodic,
-        )
+            (
+                force_mlir,
+                energy_mlir,
+                energy_and_forces_mlir,
+                compile_options_base64,
+            ) = export_jax_model(
+                num_system_atoms=numSystemAtoms,
+                force_function=_forces_kjmol,
+                energy_function=_energy_kjmol,
+                energy_and_forces_function=_energy_and_forces_kjmol,
+                periodic=forcePeriodic,
+                input_dtype=jnp.float64 if use_float64 else jnp.float32,
+            )
 
-        force = openmmjax.JaxForce(
-            force_mlir,
-            energy_mlir,
-            energy_and_forces_mlir,
-            compile_options_base64,
-        )
-        configure_pjrt_plugin(force)
-        force.setForceGroup(forceGroup)
-        force.setUsesPeriodicBoundaryConditions(forcePeriodic)
-        force.setOutputsForces(True)
-        force.addToSystem(system)
+            force = openmmjax.JaxForce(
+                force_mlir,
+                energy_mlir,
+                energy_and_forces_mlir,
+                compile_options_base64,
+            )
+            configure_pjrt_plugin(force)
+            force.setForceGroup(forceGroup)
+            force.setUsesPeriodicBoundaryConditions(forcePeriodic)
+            force.setOutputsForces(True)
+            force.addToSystem(system)
 
 
 for model_name in FeNNixPotentialImpl.KNOWN_MODELS:
@@ -236,9 +277,6 @@ def _initial_preprocessing_coordinates_angstrom(
     positions_unit,
 ):
     import numpy as np
-
-    if positions is None:
-        return np.zeros(fallback_shape, dtype=dtype)
 
     if hasattr(positions, "value_in_unit"):
         coordinates = np.asarray(positions.value_in_unit(unit.angstrom), dtype=dtype)
@@ -269,15 +307,18 @@ def _preprocessFeNNix(
     static_inputs,
     preproc_state,
     pbc: bool,
+    coordinate_dtype,
 ):
     positions_nm, box_vectors_nm = state
     preproc_in = {
         **static_inputs,
-        "coordinates": positions_nm * unit.nanometer.conversion_factor_to(unit.angstrom),
+        "coordinates": (
+            positions_nm * unit.nanometer.conversion_factor_to(unit.angstrom)
+        ).astype(coordinate_dtype),
     }
     if pbc and box_vectors_nm is not None:
         cells_ang = box_vectors_nm * unit.nanometer.conversion_factor_to(unit.angstrom)
-        cells_ang = cells_ang.reshape(1, 3, 3)
+        cells_ang = cells_ang.reshape(1, 3, 3).astype(coordinate_dtype)
         preproc_in["cells"] = cells_ang
         preproc_in["reciprocal_cells"] = _inverse_3x3(cells_ang)
     return model.preprocessing.process(preproc_state, preproc_in)
@@ -290,6 +331,7 @@ def _energyFeNNix(
     preproc_state,
     pbc: bool,
     energy_scale: float,
+    coordinate_dtype,
 ):
     """Evaluate FeNNix energy in kJ/mol from OpenMM positions in nm."""
     processed = _preprocessFeNNix(
@@ -298,9 +340,10 @@ def _energyFeNNix(
         static_inputs=static_inputs,
         preproc_state=preproc_state,
         pbc=pbc,
+        coordinate_dtype=coordinate_dtype,
     )
     energy, _ = model._total_energy(model.variables, processed)
-    return energy.squeeze() * energy_scale
+    return (energy.squeeze() * energy_scale).astype(coordinate_dtype)
 
 
 def _energyAndForcesFeNNix(
@@ -311,6 +354,7 @@ def _energyAndForcesFeNNix(
     pbc: bool,
     energy_scale: float,
     force_scale: float,
+    coordinate_dtype,
 ):
     """Evaluate FeNNix energy and forces in OpenMM units from positions in nm."""
     processed = _preprocessFeNNix(
@@ -319,9 +363,13 @@ def _energyAndForcesFeNNix(
         static_inputs=static_inputs,
         preproc_state=preproc_state,
         pbc=pbc,
+        coordinate_dtype=coordinate_dtype,
     )
     energy, forces, _ = model._energy_and_forces(model.variables, processed)
-    return energy.squeeze() * energy_scale, forces * force_scale
+    return (
+        (energy.squeeze() * energy_scale).astype(coordinate_dtype),
+        (forces * force_scale).astype(coordinate_dtype),
+    )
 
 
 def _inverse_3x3(matrix):

@@ -91,6 +91,8 @@ class FeNNixPotentialImpl(MLPotentialImpl):
         forceGroup: int,
         charge: int = 0,
         precision: str = "single",
+        preprocessing_positions=None,
+        preprocessing_positions_unit=unit.nanometer,
         **args
     ) -> None:
 
@@ -126,7 +128,9 @@ class FeNNixPotentialImpl(MLPotentialImpl):
 
         # Load the model.
         model = fennol.FENNIX.load(modelPath, **args)
-        energyScale = (unit.hartree / model.Ha_to_model_energy * unit.AVOGADRO_CONSTANT_NA).value_in_unit(unit.kilojoule_per_mole)
+        energyScale = (
+            unit.hartree / model.Ha_to_model_energy * unit.AVOGADRO_CONSTANT_NA
+        ).value_in_unit(unit.kilojoules_per_mole)
         forceScale = (energyScale / unit.angstrom).value_in_unit(unit.nanometer ** -1)
 
         # Get the atoms that should be included.

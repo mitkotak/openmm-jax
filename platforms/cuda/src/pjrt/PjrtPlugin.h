@@ -6,7 +6,6 @@
 
 namespace JaxPlugin {
 
-
 class PjrtPluginLibrary {
 public:
     PjrtPluginLibrary();

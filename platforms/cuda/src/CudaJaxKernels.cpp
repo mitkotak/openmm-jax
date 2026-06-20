@@ -114,6 +114,7 @@ double CudaCalcJaxForceKernel::execute(ContextImpl& context, bool includeForces,
     inputs.stream = openmmStream;
     inputs.usePeriodic = usePeriodic;
     inputs.inputReadyEvent = inputReadyEvent.get();
+    inputs.useDoublePrecisionReal = cu.getUseDoublePrecision();
     ScopedPrimaryContext pjrtContext(cu, primaryContext.get());
     OpenMmPjrtExecutionResult result = pjrtRuntime.execute(inputs, includeForces, includeEnergy);
     pjrtContext.pop();
