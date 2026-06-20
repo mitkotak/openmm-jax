@@ -26,11 +26,7 @@ ENERGIES = {
     },
 }
 test_data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
-models = [
-    model
-    for model in ["aceff-jax-1.1", "aceff-jax-2.0"]
-    if ACEFF_MODEL_PATHS[model].is_file()
-]
+models = [model for model in ["aceff-jax-1.1", "aceff-jax-2.0"] if ACEFF_MODEL_PATHS[model].is_file()]
 
 
 class TestAceFF:
@@ -39,69 +35,49 @@ class TestAceFF:
         pdb = app.PDBFile(os.path.join(test_data_dir, "toluene", "toluene.pdb"))
         potential = MLPotential(model)
         positions_original = pdb.getPositions(asNumpy=True)
-        system = potential.createSystem(
-            pdb.topology,
-            returnEnergyType="energy",
-            preprocessing_positions=positions_original,
-        )
-        context = mm.Context(system, mm.VerletIntegrator(0.001), cuda_platform, {"DeviceIndex": "0", "Precision": "mixed"})  # noqa: E501
+        system = potential.createSystem(pdb.topology, returnEnergyType="energy", preprocessing_positions=positions_original)
+        context = mm.Context(system, mm.VerletIntegrator(0.001), cuda_platform, {"DeviceIndex": "0", "Precision": "mixed"})
         energy_ref = ENERGIES["toluene"][model]
         for i in range(10):
             context.setPositions(positions_original + i * 0.5 * unit.nanometers)
-            energy_ml = context.getState(energy=True).getPotentialEnergy().value_in_unit(unit.kilojoules_per_mole)  # noqa: E501
+            energy_ml = context.getState(energy=True).getPotentialEnergy().value_in_unit(unit.kilojoules_per_mole)
             assert np.isclose(energy_ref, energy_ml, rtol=1e-4)
 
     def testPeriodicSystem(self):
         model = "aceff-jax-2.0"
         if not ACEFF_MODEL_PATHS[model].is_file():
             pytest.skip(f"{model} model file is not available")
-        pdb = app.PDBFile(os.path.join(test_data_dir, "alanine-dipeptide", "alanine-dipeptide-explicit.pdb"))  # noqa: E501
+        pdb = app.PDBFile(os.path.join(test_data_dir, "alanine-dipeptide", "alanine-dipeptide-explicit.pdb"))
         potential = MLPotential(model)
         positions_original = pdb.getPositions(asNumpy=True)
-        system = potential.createSystem(
-            pdb.topology,
-            returnEnergyType="energy",
-            preprocessing_positions=positions_original,
-        )
-        context = mm.Context(system, mm.VerletIntegrator(0.001), cuda_platform, {"DeviceIndex": "0", "Precision": "mixed"})  # noqa: E501
+        system = potential.createSystem(pdb.topology, returnEnergyType="energy", preprocessing_positions=positions_original)
+        context = mm.Context(system, mm.VerletIntegrator(0.001), cuda_platform, {"DeviceIndex": "0", "Precision": "mixed"})
         energy_ref = ENERGIES["alanine-dipeptide-explicit"][model]
         for i in range(3):
             positions = positions_original + i * 0.9 * unit.nanometers
             context.setPositions(positions)
-            energy_ml = context.getState(getEnergy=True).getPotentialEnergy().value_in_unit(unit.kilojoules_per_mole)  # noqa: E501
+            energy_ml = context.getState(getEnergy=True).getPotentialEnergy().value_in_unit(unit.kilojoules_per_mole)
             assert np.isclose(energy_ref, energy_ml, rtol=1e-4)
 
     @pytest.mark.parametrize("model", models)
     def testCreateMixedSystem(self, model):
-        prmtop = app.AmberPrmtopFile(os.path.join(test_data_dir, "toluene", "toluene-explicit.prm7"))  # noqa: E501
-        inpcrd = app.AmberInpcrdFile(os.path.join(test_data_dir, "toluene", "toluene-explicit.rst7"))  # noqa: E501
+        prmtop = app.AmberPrmtopFile(os.path.join(test_data_dir, "toluene", "toluene-explicit.prm7"))
+        inpcrd = app.AmberInpcrdFile(os.path.join(test_data_dir, "toluene", "toluene-explicit.rst7"))
         ml_atoms = list(range(15))
         mm_system = prmtop.createSystem(nonbondedMethod=app.PME)
         potential = MLPotential(model)
-        mixed_system = potential.createMixedSystem(
-            prmtop.topology,
-            mm_system,
-            ml_atoms,
-            interpolate=False,
-            preprocessing_positions=inpcrd.positions,
-        )
-        interp_system = potential.createMixedSystem(
-            prmtop.topology,
-            mm_system,
-            ml_atoms,
-            interpolate=True,
-            preprocessing_positions=inpcrd.positions,
-        )
-        mm_context = mm.Context(mm_system, mm.VerletIntegrator(0.001), cuda_platform, {"DeviceIndex": "0", "Precision": "mixed"})  # noqa: E501
-        mixed_context = mm.Context(mixed_system, mm.VerletIntegrator(0.001), cuda_platform, {"DeviceIndex": "0", "Precision": "mixed"})  # noqa: E501
-        interp_context = mm.Context(interp_system, mm.VerletIntegrator(0.001), cuda_platform, {"DeviceIndex": "0", "Precision": "mixed"})  # noqa: E501
+        mixed_system = potential.createMixedSystem(prmtop.topology, mm_system, ml_atoms, interpolate=False, preprocessing_positions=inpcrd.positions)
+        interp_system = potential.createMixedSystem(prmtop.topology, mm_system, ml_atoms, interpolate=True, preprocessing_positions=inpcrd.positions)
+        mm_context = mm.Context(mm_system, mm.VerletIntegrator(0.001), cuda_platform, {"DeviceIndex": "0", "Precision": "mixed"})
+        mixed_context = mm.Context(mixed_system, mm.VerletIntegrator(0.001), cuda_platform, {"DeviceIndex": "0", "Precision": "mixed"})
+        interp_context = mm.Context(interp_system, mm.VerletIntegrator(0.001), cuda_platform, {"DeviceIndex": "0", "Precision": "mixed"})
         mm_context.setPositions(inpcrd.positions)
         mixed_context.setPositions(inpcrd.positions)
         interp_context.setPositions(inpcrd.positions)
-        mm_energy = mm_context.getState(getEnergy=True).getPotentialEnergy().value_in_unit(unit.kilojoules_per_mole)  # noqa: E501
-        mixed_energy = mixed_context.getState(getEnergy=True).getPotentialEnergy().value_in_unit(unit.kilojoules_per_mole)  # noqa: E501
-        interp_energy_1 = interp_context.getState(getEnergy=True).getPotentialEnergy().value_in_unit(unit.kilojoules_per_mole)  # noqa: E501
+        mm_energy = mm_context.getState(getEnergy=True).getPotentialEnergy().value_in_unit(unit.kilojoules_per_mole)
+        mixed_energy = mixed_context.getState(getEnergy=True).getPotentialEnergy().value_in_unit(unit.kilojoules_per_mole)
+        interp_energy_1 = interp_context.getState(getEnergy=True).getPotentialEnergy().value_in_unit(unit.kilojoules_per_mole)
         interp_context.setParameter("lambda_interpolate", 0)
-        interp_energy_2 = interp_context.getState(getEnergy=True).getPotentialEnergy().value_in_unit(unit.kilojoules_per_mole)  # noqa: E501
+        interp_energy_2 = interp_context.getState(getEnergy=True).getPotentialEnergy().value_in_unit(unit.kilojoules_per_mole)
         assert np.isclose(mixed_energy, interp_energy_1, rtol=1e-5)
         assert np.isclose(mm_energy, interp_energy_2, rtol=1e-5)
