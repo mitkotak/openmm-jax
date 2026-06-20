@@ -15,4 +15,5 @@ extend-exclude = [
 select = ["E", "F", "I"]
 
 [tool.pytest.ini_options]
+pythonpath = ["."]
 python_files = ["Test*.py"]
