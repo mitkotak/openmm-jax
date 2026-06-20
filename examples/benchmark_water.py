@@ -13,12 +13,13 @@ from openmm.app import PDBFile, Simulation
 from openmmml.mlpotential import MLPotential
 
 WATER_DIR = Path(__file__).with_name("water")
-SIZES = [3, 9, 21, 30, 96, 774, 2661, 6282, 12255, 21384, 98880, 999999]
-# SIZES = [774,]
+# SIZES = [3, 12, 24, 33, 93, 777, 2661, 6288, 12261, 21384, 98880, 999978]
+SIZES = [93, 777, 2661]
 # CASES = ("mace-off-s(23)", "mace-off-s(23)-python", "mace-off-m(24)", "mace-off-m(24)-python")
 CASES = ("fennix-bio1-small-jax-python", "fennix-bio1-small-jax")
-# CASES = ("ani2x-jax-model0", "ani2x-jax-ensemble")
+# CASES = ("ani2x-jax-model0", "ani2x-jax-python")
 # CASES = ("aimnet2-jax", "aimnet2-jax-python")
+# CASES = ("aceff-jax-1.1-python", "aceff-jax-1.1")
 
 CASE_LABELS = {
     "fennix-bio1-small-jax": "FeNNix-S (JaxForce)",
@@ -33,14 +34,18 @@ CASE_LABELS = {
     "mace-off-m(24)": "MACE-JAX-OFF-M(24) (JaxForce)",
     "mace-off-s(23)-python": "MACE-JAX-OFF-S(23) (PythonForce)",
     "mace-off-m(24)-python": "MACE-JAX-OFF-M(24) (PythonForce)",
+    "aceff-jax-1.1": "AceFF-JAX-1.1 (JaxForce)",
+    "aceff-jax-1.1-python": "AceFF-JAX-1.1 (PythonForce)",
+    "aceff-jax-2.0": "AceFF-JAX-2.0 (JaxForce)",
+    "aceff-jax-2.0-python": "AceFF-JAX-2.0 (PythonForce)",
 }
 TEMP_K = 400.0
 FRICTION_PER_PS = 1.0
 TIMESTEP_PS = 0.001
 
 # Need to skip minimization since it triggers energy+force call which goes OOM on RTX
-# MINIMIZE_STEPS = 0
-MINIMIZE_STEPS = 50
+MINIMIZE_STEPS = 0
+# MINIMIZE_STEPS = 50
 
 EQUILIBRATION_STEPS = 100
 WARMUP_STEPS = 10
@@ -62,12 +67,15 @@ def setup_simulation(model_name: str, size: int) -> tuple[Simulation, dict[str, 
         system = MLPotential("fennix-bio1-small-jax-python").createSystem(
             topology,
             removeCMMotion=False,
+            preprocessing_positions=pdb.positions,
         )
     elif model_name == "ani2x-jax-python":
         importlib.import_module("openmmjax_models.anipotential_pythonforce")
         system = MLPotential("ani2x-jax-python").createSystem(
             topology,
             removeCMMotion=False,
+            periodic_neighborlist=False,
+            preprocessing_positions=pdb.positions,
         )
     elif model_name.startswith("ani2x-jax"):
         importlib.import_module("openmmjax_models.anipotential")
@@ -75,6 +83,7 @@ def setup_simulation(model_name: str, size: int) -> tuple[Simulation, dict[str, 
             topology,
             removeCMMotion=False,
             periodic_neighborlist=False,
+            preprocessing_positions=pdb.positions,
         )
     elif model_name == "aimnet2-jax":
         importlib.import_module("openmmjax_models.aimnet2potential")
@@ -82,6 +91,7 @@ def setup_simulation(model_name: str, size: int) -> tuple[Simulation, dict[str, 
             topology,
             removeCMMotion=False,
             periodic_neighborlist=False,
+            preprocessing_positions=pdb.positions,
         )
     elif model_name == "aimnet2-jax-python":
         importlib.import_module("openmmjax_models.aimnet2potential_pythonforce")
@@ -89,6 +99,7 @@ def setup_simulation(model_name: str, size: int) -> tuple[Simulation, dict[str, 
             topology,
             removeCMMotion=False,
             periodic_neighborlist=False,
+            preprocessing_positions=pdb.positions,
         )
     elif model_name.startswith("mace-off-") and not model_name.endswith("-python"):
         importlib.import_module("openmmjax_models.macepotential")
@@ -96,6 +107,7 @@ def setup_simulation(model_name: str, size: int) -> tuple[Simulation, dict[str, 
             topology,
             removeCMMotion=False,
             periodic_neighborlist=False,
+            preprocessing_positions=pdb.positions,
         )
     elif model_name.startswith("mace-off-") and model_name.endswith("-python"):
         importlib.import_module("openmmjax_models.macepotential_pythonforce")
@@ -103,6 +115,23 @@ def setup_simulation(model_name: str, size: int) -> tuple[Simulation, dict[str, 
             topology,
             removeCMMotion=False,
             periodic_neighborlist=False,
+            preprocessing_positions=pdb.positions,
+        )
+    elif model_name.startswith("aceff-") and model_name.endswith("-python"):
+        importlib.import_module("openmmjax_models.aceffpotential_pythonforce")
+        system = MLPotential(model_name).createSystem(
+            topology,
+            removeCMMotion=False,
+            periodic_neighborlist=False,
+            preprocessing_positions=pdb.positions,
+        )
+    elif model_name.startswith("aceff-"):
+        importlib.import_module("openmmjax_models.aceffpotential")
+        system = MLPotential(model_name).createSystem(
+            topology,
+            removeCMMotion=False,
+            periodic_neighborlist=False,
+            preprocessing_positions=pdb.positions,
         )
     else:
         raise ValueError(f"unknown benchmark case: {model_name}")
