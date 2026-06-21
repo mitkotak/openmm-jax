@@ -119,23 +119,23 @@ def cosine_cutoff(d, cutoff, cutoff_lower=0.0):
         return jnp.where(d < cutoff, c, 0.0)
 
 
-def _isotropic_to_tensor(isotropic):
+def _scalar_to_tensor(scalar):
     """Scalar [N, F] -> diagonal tensor [N, 3, 3, F]."""
-    eye = jnp.eye(3, dtype=isotropic.dtype)[None, :, :, None]
-    return isotropic[:, None, None, :] * eye
+    eye = jnp.eye(3, dtype=scalar.dtype)[None, :, :, None]
+    return scalar[:, None, None, :] * eye
 
 
 def decompose_tensor(X):
-    """Decompose into irreducible components I, A, S."""
+    """Decompose into scalar, antisymmetric, and symmetric components."""
     antisymmetric = 0.5 * (X - jnp.swapaxes(X, 1, 2))
     symmetric_full = X - antisymmetric
-    isotropic = jnp.diagonal(X, axis1=1, axis2=2).mean(axis=-1)
-    symmetric = symmetric_full - _isotropic_to_tensor(isotropic)
-    return isotropic, antisymmetric, symmetric
+    scalar = jnp.diagonal(X, axis1=1, axis2=2).mean(axis=-1)
+    symmetric = symmetric_full - _scalar_to_tensor(scalar)
+    return scalar, antisymmetric, symmetric
 
 
-def compose_tensor(isotropic, antisymmetric, symmetric):
-    return _isotropic_to_tensor(isotropic) + antisymmetric + symmetric
+def compose_tensor(scalar, antisymmetric, symmetric):
+    return _scalar_to_tensor(scalar) + antisymmetric + symmetric
 
 
 def tensor_norm(X):
@@ -180,8 +180,8 @@ def skewtensor_to_vector(A):
 def outer_to_symtensor(T):
     """Symmetrize and remove trace. [N, 3, 3, F] -> [N, 3, 3, F]."""
     symmetric = 0.5 * (T + jnp.swapaxes(T, 1, 2))
-    isotropic = jnp.diagonal(T, axis1=1, axis2=2).mean(axis=-1)
-    return symmetric - _isotropic_to_tensor(isotropic)
+    scalar = jnp.diagonal(T, axis1=1, axis2=2).mean(axis=-1)
+    return symmetric - _scalar_to_tensor(scalar)
 
 
 def tensor_matmul_o3(Y, msg):
@@ -268,14 +268,14 @@ def embedding(
         axis=1,
     )
 
-    isotropic_messages = edge_features[:, 0, :]
-    isotropic = jnp.zeros((num_atoms, num_features), dtype=isotropic_messages.dtype)
-    isotropic = isotropic.at[edge_src].add(isotropic_messages)
+    scalar_messages = edge_features[:, 0, :]
+    scalar = jnp.zeros((num_atoms, num_features), dtype=scalar_messages.dtype)
+    scalar = scalar.at[edge_src].add(scalar_messages)
 
     antisymmetric_messages = edge_features[:, 1, :][:, None, :] * unit_vectors[:, :, None]
     antisymmetric_vectors = jnp.zeros(
         (num_atoms, 3, num_features),
-        dtype=isotropic_messages.dtype,
+        dtype=scalar_messages.dtype,
     )
     antisymmetric_vectors = antisymmetric_vectors.at[edge_src].add(antisymmetric_messages)
 
@@ -283,13 +283,13 @@ def embedding(
     symmetric_messages = edge_features[:, 2, :][:, None, None, :] * outer[:, :, :, None]
     symmetric = jnp.zeros(
         (num_atoms, 3, 3, num_features),
-        dtype=isotropic_messages.dtype,
+        dtype=scalar_messages.dtype,
     )
     symmetric = symmetric.at[edge_src].add(symmetric_messages)
 
     antisymmetric = vector_to_skewtensor(antisymmetric_vectors)
     symmetric = outer_to_symtensor(symmetric)
-    tensor_features = compose_tensor(isotropic, antisymmetric, symmetric)
+    tensor_features = compose_tensor(scalar, antisymmetric, symmetric)
 
     norm = tensor_norm(tensor_features)
     norm = weights["init_norm"](norm)
@@ -297,15 +297,15 @@ def embedding(
         norm = jax.nn.silu(layer(norm))
     norm = norm.reshape(-1, 3, num_features)
 
-    isotropic_norm = norm[:, 0, :]
+    scalar_norm = norm[:, 0, :]
     antisymmetric_norm = norm[:, 1, :][:, None, None, :]
     symmetric_norm = norm[:, 2, :][:, None, None, :]
 
-    isotropic = weights["linears_tensor"][0](isotropic) * isotropic_norm
+    scalar = weights["linears_tensor"][0](scalar) * scalar_norm
     antisymmetric = weights["linears_tensor"][1](antisymmetric) * antisymmetric_norm
     symmetric = weights["linears_tensor"][2](symmetric) * symmetric_norm
 
-    return compose_tensor(isotropic, antisymmetric, symmetric)
+    return compose_tensor(scalar, antisymmetric, symmetric)
 
 
 def neural_charge_equilibration(partial_charges, charge_weights, total_charge=0.0):
@@ -316,9 +316,9 @@ def neural_charge_equilibration(partial_charges, charge_weights, total_charge=0.
 
 
 def charge_prediction(tensor_features, weights, total_charge=0.0):
-    isotropic, antisymmetric, symmetric = decompose_tensor(tensor_features)
+    scalar, antisymmetric, symmetric = decompose_tensor(tensor_features)
     charge_features = jnp.concatenate(
-        [isotropic, tensor_norm(antisymmetric), tensor_norm(symmetric)],
+        [scalar, tensor_norm(antisymmetric), tensor_norm(symmetric)],
         axis=-1,
     )
 
@@ -374,11 +374,11 @@ def message_passing(
 
     tensor_features = tensor_features / (tensor_norm(tensor_features) + 1)[:, None, None, :]
 
-    isotropic, antisymmetric, symmetric = decompose_tensor(tensor_features)
-    isotropic = weights["linears_tensor"][0](isotropic)
+    scalar, antisymmetric, symmetric = decompose_tensor(tensor_features)
+    scalar = weights["linears_tensor"][0](scalar)
     antisymmetric = weights["linears_tensor"][1](antisymmetric)
     symmetric = weights["linears_tensor"][2](symmetric)
-    projected_features = compose_tensor(isotropic, antisymmetric, symmetric)
+    projected_features = compose_tensor(scalar, antisymmetric, symmetric)
 
     antisymmetric_vectors = skewtensor_to_vector(antisymmetric)
 
@@ -386,9 +386,9 @@ def message_passing(
     vector_weights = edge_features[:, 1, :][:, None, :]
     tensor_weights = edge_features[:, 2, :][:, None, None, :]
 
-    isotropic_messages = scalar_weights * isotropic[edge_dst]
-    isotropic_message = jnp.zeros((num_atoms, num_features), dtype=tensor_features.dtype)
-    isotropic_message = isotropic_message.at[edge_src].add(isotropic_messages)
+    scalar_messages = scalar_weights * scalar[edge_dst]
+    scalar_message = jnp.zeros((num_atoms, num_features), dtype=tensor_features.dtype)
+    scalar_message = scalar_message.at[edge_src].add(scalar_messages)
 
     antisymmetric_messages = vector_weights * antisymmetric_vectors[edge_dst]
     antisymmetric_message_vectors = jnp.zeros(
@@ -407,7 +407,7 @@ def message_passing(
     symmetric_message = symmetric_message.at[edge_src].add(symmetric_messages)
 
     antisymmetric_message = vector_to_skewtensor(antisymmetric_message_vectors)
-    messages = compose_tensor(isotropic_message, antisymmetric_message, symmetric_message)
+    messages = compose_tensor(scalar_message, antisymmetric_message, symmetric_message)
 
     charge_factor = 1.0
     if total_charge_interaction_scale:
@@ -418,17 +418,17 @@ def message_passing(
     else:
         updates = 2 * tensor_matmul_so3(projected_features, messages)
 
-    isotropic_update, antisymmetric_update, symmetric_update = decompose_tensor(updates)
+    scalar_update, antisymmetric_update, symmetric_update = decompose_tensor(updates)
 
     update_norm = tensor_norm(updates) + 1
-    isotropic_update = isotropic_update / update_norm
+    scalar_update = scalar_update / update_norm
     antisymmetric_update = antisymmetric_update / update_norm[:, None, None, :]
     symmetric_update = symmetric_update / update_norm[:, None, None, :]
 
-    isotropic_update = weights["linears_tensor"][3](isotropic_update)
+    scalar_update = weights["linears_tensor"][3](scalar_update)
     antisymmetric_update = weights["linears_tensor"][4](antisymmetric_update)
     symmetric_update = weights["linears_tensor"][5](symmetric_update)
-    delta_features = compose_tensor(isotropic_update, antisymmetric_update, symmetric_update)
+    delta_features = compose_tensor(scalar_update, antisymmetric_update, symmetric_update)
 
     return (
         tensor_features
@@ -471,10 +471,10 @@ def edge_features(
     return distances, unit_vectors, radial_features, edge_mask
 
 
-def node_energies(tensor_features, weights):
-    isotropic, antisymmetric, symmetric = decompose_tensor(tensor_features)
+def local_node_energies(tensor_features, weights):
+    scalar, antisymmetric, symmetric = decompose_tensor(tensor_features)
     energy_features = jnp.concatenate(
-        [3.0 * isotropic**2, tensor_norm(antisymmetric), tensor_norm(symmetric)],
+        [3.0 * scalar**2, tensor_norm(antisymmetric), tensor_norm(symmetric)],
         axis=-1,
     )
     energy_features = weights["out_norm"](energy_features)
@@ -484,125 +484,6 @@ def node_energies(tensor_features, weights):
         if i < len(weights["output_network"]) - 1:
             energy_features = jax.nn.silu(energy_features)
     return energy_features.squeeze(-1)
-
-
-def coulomb_energy(
-    model,
-    positions,
-    partial_charges,
-    *,
-    box_vectors=None,
-):
-    partial_charges = jnp.concatenate(partial_charges, axis=-1)
-    pair_src, pair_dst = unique_pairs(int(positions.shape[0]))
-    if box_vectors is None:
-        pair_vectors = positions[pair_src] - positions[pair_dst]
-    else:
-        displacement, _ = space.periodic_general(
-            jnp.swapaxes(jnp.asarray(box_vectors, dtype=positions.dtype), -1, -2),
-            fractional_coordinates=True,
-        )
-        pair_vectors = jax.vmap(displacement)(positions[pair_src], positions[pair_dst])
-
-    distances = safe_norm(pair_vectors, axis=-1)
-    damping_x = jnp.clip(
-        distances / float(model.coulomb_damp_cutoff),
-        0.0,
-        1.0 - 1e-6,
-    )
-    damping = jnp.exp(-1.0 / (1.0 - damping_x**2)) / float(model.exp_minus_1)
-    cutoff_values = 1.0 - damping
-    charge_products = partial_charges[pair_src] * partial_charges[pair_dst]
-    charge_weights = model.params["qweights"]
-    weighted_charge_products = (
-        charge_products * charge_weights[None, :]
-    ).sum(axis=-1) / charge_weights.sum()
-    if model.coulomb_cutoff is None:
-        pair_energies = cutoff_values * weighted_charge_products / distances
-    else:
-        cutoff = float(model.coulomb_cutoff)
-        epsilon = float(model.coulomb_epsilon_solvent)
-        k_rf = (1.0 / cutoff**3) * (epsilon - 1.0) / (2.0 * epsilon + 1.0)
-        c_rf = (1.0 / cutoff) * (3.0 * epsilon) / (2.0 * epsilon + 1.0)
-        pair_energies = cutoff_values * weighted_charge_products * (
-            1.0 / distances + k_rf * distances**2 - c_rf
-        )
-        pair_energies = jnp.where(distances < cutoff, pair_energies, 0.0)
-    return float(model.coulomb_factor) * pair_energies.sum()
-
-
-def node_energies_and_charges(
-    model,
-    positions,
-    species,
-    edge_src,
-    edge_dst,
-    pbc_shifts,
-    edge_mask,
-    total_charge,
-):
-    weights = model.params
-    distances, unit_vectors, radial_features, edge_mask = edge_features(
-        positions,
-        edge_src,
-        edge_dst,
-        pbc_shifts,
-        edge_mask,
-        weights,
-        model.cutoff,
-        model.cutoff_lower,
-        model.alpha,
-    )
-
-    tensor_features = embedding(
-        species,
-        edge_src,
-        edge_dst,
-        distances,
-        unit_vectors,
-        radial_features,
-        model.cutoff,
-        model.cutoff_lower,
-        weights["tensor_embedding"],
-        edge_mask=edge_mask,
-    )
-
-    partial_charges = None
-    charge_history = []
-    if model.charge_predictors:
-        partial_charges = charge_prediction(
-            tensor_features,
-            weights["charge_predict_0"],
-            total_charge,
-        )
-        charge_history.append(partial_charges)
-
-    for layer_index, layer in enumerate(weights["layers"]):
-        tensor_features = message_passing(
-            tensor_features,
-            partial_charges,
-            total_charge,
-            edge_src,
-            edge_dst,
-            distances,
-            radial_features,
-            layer,
-            model.cutoff,
-            model.cutoff_lower,
-            model.group,
-            edge_charge_features=model.edge_charge_features,
-            total_charge_interaction_scale=model.total_charge_interaction_scale,
-            edge_mask=edge_mask,
-        )
-        if model.charge_predictors:
-            partial_charges = charge_prediction(
-                tensor_features,
-                weights["charge_predicts"][layer_index],
-                total_charge,
-            )
-            charge_history.append(partial_charges)
-
-    return node_energies(tensor_features, weights), charge_history
 
 
 class AceFFModel(eqx.Module):
@@ -648,6 +529,123 @@ class AceFFModel(eqx.Module):
         self.neighbor_cell_atom_threshold = int(config["neighbor_cell_atom_threshold"])
         self.neighbor_cell_capacity_multiplier = float(config["neighbor_cell_capacity_multiplier"])
 
+    def local_node_energies_and_charges(
+        self,
+        positions,
+        species,
+        edge_src,
+        edge_dst,
+        pbc_shifts,
+        edge_mask,
+        total_charge,
+    ):
+        weights = self.params
+        distances, unit_vectors, radial_features, edge_mask = edge_features(
+            positions,
+            edge_src,
+            edge_dst,
+            pbc_shifts,
+            edge_mask,
+            weights,
+            self.cutoff,
+            self.cutoff_lower,
+            self.alpha,
+        )
+
+        tensor_features = embedding(
+            species,
+            edge_src,
+            edge_dst,
+            distances,
+            unit_vectors,
+            radial_features,
+            self.cutoff,
+            self.cutoff_lower,
+            weights["tensor_embedding"],
+            edge_mask=edge_mask,
+        )
+
+        partial_charges = None
+        charge_history = []
+        if self.charge_predictors:
+            partial_charges = charge_prediction(
+                tensor_features,
+                weights["charge_predict_0"],
+                total_charge,
+            )
+            charge_history.append(partial_charges)
+
+        for layer_index, layer in enumerate(weights["layers"]):
+            tensor_features = message_passing(
+                tensor_features,
+                partial_charges,
+                total_charge,
+                edge_src,
+                edge_dst,
+                distances,
+                radial_features,
+                layer,
+                self.cutoff,
+                self.cutoff_lower,
+                self.group,
+                edge_charge_features=self.edge_charge_features,
+                total_charge_interaction_scale=self.total_charge_interaction_scale,
+                edge_mask=edge_mask,
+            )
+            if self.charge_predictors:
+                partial_charges = charge_prediction(
+                    tensor_features,
+                    weights["charge_predicts"][layer_index],
+                    total_charge,
+                )
+                charge_history.append(partial_charges)
+
+        return local_node_energies(tensor_features, weights), charge_history
+
+    def _coulomb_energy(
+        self,
+        positions,
+        partial_charges,
+        *,
+        box_vectors=None,
+    ):
+        partial_charges = jnp.concatenate(partial_charges, axis=-1)
+        pair_src, pair_dst = unique_pairs(int(positions.shape[0]))
+        if box_vectors is None:
+            pair_vectors = positions[pair_src] - positions[pair_dst]
+        else:
+            displacement, _ = space.periodic_general(
+                jnp.swapaxes(jnp.asarray(box_vectors, dtype=positions.dtype), -1, -2),
+                fractional_coordinates=True,
+            )
+            pair_vectors = jax.vmap(displacement)(positions[pair_src], positions[pair_dst])
+
+        distances = safe_norm(pair_vectors, axis=-1)
+        damping_x = jnp.clip(
+            distances / float(self.coulomb_damp_cutoff),
+            0.0,
+            1.0 - 1e-6,
+        )
+        damping = jnp.exp(-1.0 / (1.0 - damping_x**2)) / float(self.exp_minus_1)
+        cutoff_values = 1.0 - damping
+        charge_products = partial_charges[pair_src] * partial_charges[pair_dst]
+        charge_weights = self.params["qweights"]
+        weighted_charge_products = (
+            charge_products * charge_weights[None, :]
+        ).sum(axis=-1) / charge_weights.sum()
+        if self.coulomb_cutoff is None:
+            pair_energies = cutoff_values * weighted_charge_products / distances
+        else:
+            cutoff = float(self.coulomb_cutoff)
+            epsilon = float(self.coulomb_epsilon_solvent)
+            k_rf = (1.0 / cutoff**3) * (epsilon - 1.0) / (2.0 * epsilon + 1.0)
+            c_rf = (1.0 / cutoff) * (3.0 * epsilon) / (2.0 * epsilon + 1.0)
+            pair_energies = cutoff_values * weighted_charge_products * (
+                1.0 / distances + k_rf * distances**2 - c_rf
+            )
+            pair_energies = jnp.where(distances < cutoff, pair_energies, 0.0)
+        return float(self.coulomb_factor) * pair_energies.sum()
+
     def __call__(
         self,
         positions,
@@ -680,8 +678,7 @@ class AceFFModel(eqx.Module):
             cutoff=float(self.cutoff),
             box_vectors=box_vectors if periodic else None,
         )
-        node_energies, partial_charges = node_energies_and_charges(
-            self,
+        node_energies, partial_charges = self.local_node_energies_and_charges(
             positions,
             species,
             edge_src,
@@ -693,13 +690,13 @@ class AceFFModel(eqx.Module):
         local_energy = jnp.sum(node_energies)
         if not self.coulomb_energy:
             return local_energy
-        coulomb_energy_term = coulomb_energy(
-            self,
+        coulomb_energy = self._coulomb_energy(
             positions,
             partial_charges,
             box_vectors=box_vectors if periodic else None,
         )
-        return local_energy + coulomb_energy_term
+        total_energy = local_energy + coulomb_energy
+        return total_energy
 
 def load_aceff_model(
     model: str | PathLike = "aceff-jax-2.0",

@@ -24,7 +24,7 @@ class FeNNixPotentialImplFactory(MLPotentialImplFactory):
         self,
         name: str,
         modelPath: str | None = None,
-        **_args,
+        **args,
     ) -> MLPotentialImpl:
         return FeNNixPotentialImpl(name, modelPath)
 
@@ -224,8 +224,7 @@ class FeNNixPotentialImpl(MLPotentialImpl):
                 return energy, forces
 
             def _forces_kjmol(positions_nm, box_vectors_nm=None):
-                _energy, forces = _energy_and_forces_kjmol(positions_nm, box_vectors_nm)
-                return forces
+                return _energy_and_forces_kjmol(positions_nm, box_vectors_nm)[1]
 
             (
                 force_mlir,

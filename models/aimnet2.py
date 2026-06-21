@@ -400,110 +400,6 @@ def _simple_coulomb_all_pairs(
     return jnp.sum(jnp.where(pair_mask, pair_energy, 0.0).astype(jnp.float64))
 
 
-def aimnet2_message_passing(
-    model,
-    species,
-    unit_vectors,
-    g_ijs,
-    neighbors,
-    edge_mask,
-    total_charge,
-):
-    num_atoms = species.shape[0]
-    nfeature, nshifts, ncharge = model.nfeature, model.nshifts, model.ncharge
-
-    def embedding_features(atomic_embeddings):
-        return atomic_embedding_features(
-            atomic_embeddings, g_ijs, unit_vectors, model.conv_a_agh, neighbors, edge_mask
-        )
-
-    def partial_charge_features(partial_charges):
-        return charge_features(
-            partial_charges, g_ijs, unit_vectors, model.conv_q_agh, neighbors, edge_mask
-        )
-
-    atomic_embeddings = model.afv[species].reshape(num_atoms, nfeature, nshifts)
-    embedding_flat = atomic_embeddings.reshape(num_atoms, -1)
-    out0 = model.mlp0(
-        jnp.concatenate([embedding_flat, embedding_features(atomic_embeddings)], axis=-1),
-        last_linear=model.mlp_last_linear[0],
-    )
-    partial_charges = neural_charge_equilibration(
-        out0[:, :ncharge], out0[:, ncharge : 2 * ncharge], total_charge
-    )
-    atomic_embeddings = (embedding_flat + out0[:, 2 * ncharge :]).reshape(
-        num_atoms, nfeature, nshifts
-    )
-
-    embedding_flat = atomic_embeddings.reshape(num_atoms, -1)
-    out1 = model.mlp1(
-        jnp.concatenate([
-            embedding_flat,
-            embedding_features(atomic_embeddings),
-            partial_charges,
-            partial_charge_features(partial_charges),
-        ], axis=-1),
-        last_linear=model.mlp_last_linear[1],
-    )
-    partial_charges = neural_charge_equilibration(
-        partial_charges + out1[:, :ncharge], out1[:, ncharge : 2 * ncharge], total_charge
-    )
-    atomic_embeddings = (embedding_flat + out1[:, 2 * ncharge :]).reshape(
-        num_atoms, nfeature, nshifts
-    )
-
-    embedding_flat = atomic_embeddings.reshape(num_atoms, -1)
-    aim_vectors = model.mlp2(
-        jnp.concatenate([
-            embedding_flat,
-            embedding_features(atomic_embeddings),
-            partial_charges,
-            partial_charge_features(partial_charges),
-        ], axis=-1),
-        last_linear=model.mlp_last_linear[2],
-    )
-    return aim_vectors, partial_charges
-
-
-def aimnet2_coulomb_energy(
-    model,
-    partial_charges,
-    positions,
-    r_ij,
-    neighbors,
-    edge_mask,
-    lr_neighbor_idx,
-    box_vectors,
-):
-    partial_charges = partial_charges.squeeze(-1)
-    local_coulomb = _short_range_coulomb_dense(
-        partial_charges,
-        r_ij,
-        neighbors,
-        edge_mask,
-        coulomb_rc=model.coulomb_rc,
-        coulomb_factor=model.coulomb_factor,
-        exp_minus_1=model.exp_minus_1,
-    )
-    if box_vectors is None:
-        total_coulomb = _simple_coulomb_all_pairs(
-            positions,
-            partial_charges,
-            hartree_bohr=model.hartree_bohr,
-        )
-    else:
-        total_coulomb = _dsf_coulomb_dense(
-            partial_charges,
-            positions,
-            lr_neighbor_idx,
-            box_vectors=box_vectors,
-            cutoff=float(model.lr_cutoff),
-            alpha=float(model.dsf_alpha),
-            coulomb_factor=model.coulomb_factor,
-        )
-    return total_coulomb - local_coulomb
-
-
 class AIMNet2Model(eqx.Module):
     bohr_a: float = eqx.field(static=True)
     coulomb_factor: float = eqx.field(static=True)
@@ -612,7 +508,158 @@ class AIMNet2Model(eqx.Module):
             self.d3_rcov = jnp.asarray(d3_params["rcov"], dtype=dtype)
             self.d3_r2r4 = jnp.asarray(d3_params["r2r4"], dtype=dtype)
 
-    def node_energies_and_charges(
+    def prepare_d3_data(self, species_np):
+        unique_z = np.unique(species_np)
+        z_to_idx = np.zeros(int(unique_z.max()) + 1, dtype=np.int32)
+        for i, z in enumerate(unique_z):
+            z_to_idx[int(z)] = i
+        species_idx = z_to_idx[species_np]
+        unique_z_jax = jnp.asarray(unique_z, dtype=jnp.int32)
+        return {
+            "c6ab": self.d3_c6ab[unique_z_jax[:, None], unique_z_jax[None, :]],
+            "rcov": self.d3_rcov[unique_z_jax],
+            "r2r4": self.d3_r2r4[unique_z_jax],
+            "species_idx": jnp.asarray(species_idx, dtype=jnp.int32),
+            "d3_s6": float(self.d3_s6),
+            "d3_s8": float(self.d3_s8),
+            "d3_a1": float(self.d3_a1),
+            "d3_a2": float(self.d3_a2),
+            "d3_k1": float(self.d3_k1),
+            "d3_k3": float(self.d3_k3),
+            "bohr_a": float(self.bohr_a),
+            "hartree_ev": float(self.hartree_ev),
+        }
+
+    def message_passing(
+        self,
+        species,
+        unit_vectors,
+        g_ijs,
+        neighbors,
+        edge_mask,
+        total_charge,
+    ):
+        num_atoms = species.shape[0]
+        nfeature, nshifts, ncharge = self.nfeature, self.nshifts, self.ncharge
+
+        def embedding_features(atomic_embeddings):
+            return atomic_embedding_features(
+                atomic_embeddings,
+                g_ijs,
+                unit_vectors,
+                self.conv_a_agh,
+                neighbors,
+                edge_mask,
+            )
+
+        def partial_charge_features(partial_charges):
+            return charge_features(
+                partial_charges,
+                g_ijs,
+                unit_vectors,
+                self.conv_q_agh,
+                neighbors,
+                edge_mask,
+            )
+
+        atomic_embeddings = self.afv[species].reshape(num_atoms, nfeature, nshifts)
+        embedding_flat = atomic_embeddings.reshape(num_atoms, -1)
+        out0 = self.mlp0(
+            jnp.concatenate(
+                [embedding_flat, embedding_features(atomic_embeddings)],
+                axis=-1,
+            ),
+            last_linear=self.mlp_last_linear[0],
+        )
+        partial_charges = neural_charge_equilibration(
+            out0[:, :ncharge],
+            out0[:, ncharge : 2 * ncharge],
+            total_charge,
+        )
+        atomic_embeddings = (embedding_flat + out0[:, 2 * ncharge :]).reshape(
+            num_atoms,
+            nfeature,
+            nshifts,
+        )
+
+        embedding_flat = atomic_embeddings.reshape(num_atoms, -1)
+        out1 = self.mlp1(
+            jnp.concatenate(
+                [
+                    embedding_flat,
+                    embedding_features(atomic_embeddings),
+                    partial_charges,
+                    partial_charge_features(partial_charges),
+                ],
+                axis=-1,
+            ),
+            last_linear=self.mlp_last_linear[1],
+        )
+        partial_charges = neural_charge_equilibration(
+            partial_charges + out1[:, :ncharge],
+            out1[:, ncharge : 2 * ncharge],
+            total_charge,
+        )
+        atomic_embeddings = (embedding_flat + out1[:, 2 * ncharge :]).reshape(
+            num_atoms,
+            nfeature,
+            nshifts,
+        )
+
+        embedding_flat = atomic_embeddings.reshape(num_atoms, -1)
+        aim_vectors = self.mlp2(
+            jnp.concatenate(
+                [
+                    embedding_flat,
+                    embedding_features(atomic_embeddings),
+                    partial_charges,
+                    partial_charge_features(partial_charges),
+                ],
+                axis=-1,
+            ),
+            last_linear=self.mlp_last_linear[2],
+        )
+        return aim_vectors, partial_charges
+
+    def coulomb_energy(
+        self,
+        partial_charges,
+        positions,
+        r_ij,
+        neighbors,
+        edge_mask,
+        lr_neighbor_idx,
+        box_vectors,
+    ):
+        partial_charges = partial_charges.squeeze(-1)
+        local_coulomb = _short_range_coulomb_dense(
+            partial_charges,
+            r_ij,
+            neighbors,
+            edge_mask,
+            coulomb_rc=self.coulomb_rc,
+            coulomb_factor=self.coulomb_factor,
+            exp_minus_1=self.exp_minus_1,
+        )
+        if box_vectors is None:
+            total_coulomb = _simple_coulomb_all_pairs(
+                positions,
+                partial_charges,
+                hartree_bohr=self.hartree_bohr,
+            )
+        else:
+            total_coulomb = _dsf_coulomb_dense(
+                partial_charges,
+                positions,
+                lr_neighbor_idx,
+                box_vectors=box_vectors,
+                cutoff=float(self.lr_cutoff),
+                alpha=float(self.dsf_alpha),
+                coulomb_factor=self.coulomb_factor,
+            )
+        return total_coulomb - local_coulomb
+
+    def local_node_energies_and_charges(
         self,
         positions: Array,
         species: Array,
@@ -634,8 +681,7 @@ class AIMNet2Model(eqx.Module):
         unit_vectors = local_vectors / jnp.maximum(r_ij[..., None], 1.0e-8)
         g_ijs = radial_symmetry_functions(r_ij, self.shifts, self.eta, self.cutoff)
         g_ijs = jnp.where(edge_mask[..., None], g_ijs, 0.0)
-        aim_vectors, partial_charges = aimnet2_message_passing(
-            self,
+        aim_vectors, partial_charges = self.message_passing(
             species,
             unit_vectors,
             g_ijs,
@@ -697,7 +743,7 @@ class AIMNet2Model(eqx.Module):
                 r_ij,
                 neighbors,
                 edge_mask,
-            ) = self.node_energies_and_charges(
+            ) = self.local_node_energies_and_charges(
                 positions,
                 species,
                 neighbor_idx=neighbor_idx,
@@ -705,8 +751,7 @@ class AIMNet2Model(eqx.Module):
                 box_vectors=box_vectors,
             )
             local_energy = jnp.sum(node_energies)
-            coulomb_energy = aimnet2_coulomb_energy(
-                self,
+            coulomb_energy = self.coulomb_energy(
                 partial_charges,
                 positions,
                 r_ij,

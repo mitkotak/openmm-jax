@@ -33,7 +33,7 @@ class OrbPotentialImplFactory(MLPotentialImplFactory):
         charge: float = 0.0,
         total_charge: Optional[float] = None,
         multiplicity: int = 1,
-        **_args,
+        **args,
     ):
         return OrbPotentialImpl(
             name,
@@ -74,7 +74,7 @@ class OrbPotentialImpl(MLPotentialImpl):
         periodic_neighborlist: bool = True,
         preprocessing_positions=None,
         preprocessing_positions_unit=unit.nanometer,
-        **_args,
+        **args,
     ):
         includedAtoms = list(topology.atoms())
         if atoms is not None:
@@ -163,8 +163,7 @@ class OrbPotentialImpl(MLPotentialImpl):
             return energy, -minus_forces
 
         def _forces_kjmol(positions_nm, box_vectors_nm=None):
-            _energy, forces = _energy_and_forces_kjmol(positions_nm, box_vectors_nm)
-            return forces
+            return _energy_and_forces_kjmol(positions_nm, box_vectors_nm)[1]
 
         force_mlir, energy_mlir, energy_and_forces_mlir, compile_options_base64 = export_jax_model(
             num_system_atoms=numSystemAtoms,

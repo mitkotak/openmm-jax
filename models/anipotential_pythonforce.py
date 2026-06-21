@@ -20,7 +20,7 @@ from .ani import (
 
 
 class ANI2xPythonForcePotentialImplFactory(MLPotentialImplFactory):
-    def createImpl(self, name, modelPath=None, **_args):
+    def createImpl(self, name, modelPath=None, **args):
         return ANI2xPythonForcePotentialImpl(name, modelPath=modelPath)
 
 
@@ -41,7 +41,7 @@ class ANI2xPythonForcePotentialImpl(MLPotentialImpl):
         periodic_neighborlist: bool = True,
         preprocessing_positions=None,
         preprocessing_positions_unit=unit.nanometer,
-        **_args,
+        **args,
     ):
         includedAtoms = list(topology.atoms())
         if atoms is not None:
@@ -238,7 +238,7 @@ def _energyANI(
     )
     return (
         jnp.sum(
-            model.node_energies(
+            model.local_node_energies(
                 positions,
                 species,
                 radial_neighbor_idx=radial_neighbors.idx,
@@ -267,14 +267,14 @@ class _ComputeANI2xPythonForce:
         self.angular_neighbor_list = angular_neighbor_list
         self.periodic = bool(periodic)
         self.indices = None if indices is None else np.asarray(indices, dtype=np.int32)
-        self._jax_indices = (
+        self.jax_indices = (
             None if self.indices is None else jnp.asarray(self.indices, dtype=jnp.int32)
         )
         self._energy_and_grad = None
 
     def _energy_kjmol(self, positions_nm, box_vectors_nm=None):
         selected_positions = (
-            positions_nm if self._jax_indices is None else positions_nm[self._jax_indices]
+            positions_nm if self.jax_indices is None else positions_nm[self.jax_indices]
         )
         return _energyANI(
             selected_positions,

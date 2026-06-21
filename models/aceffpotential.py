@@ -26,7 +26,7 @@ jax.config.update("jax_default_matmul_precision", "highest")
 
 
 class AceFFPotentialImplFactory(MLPotentialImplFactory):
-    def createImpl(self, name, modelPath=None, **_args):
+    def createImpl(self, name, modelPath=None, **args):
         return AceFFPotentialImpl(name, modelPath=modelPath)
 
 
@@ -49,7 +49,7 @@ class AceFFPotentialImpl(MLPotentialImpl):
         periodic_neighborlist: bool = True,
         preprocessing_positions=None,
         preprocessing_positions_unit=unit.nanometer,
-        **_args,
+        **args,
     ):
         includedAtoms = list(topology.atoms())
         if atoms is not None:
@@ -122,8 +122,7 @@ class AceFFPotentialImpl(MLPotentialImpl):
             return energy, -minus_forces
 
         def _forces_kjmol(positions_nm, box_vectors_nm=None):
-            _energy, forces = _energy_and_forces_kjmol(positions_nm, box_vectors_nm)
-            return forces
+            return _energy_and_forces_kjmol(positions_nm, box_vectors_nm)[1]
 
         force_mlir, energy_mlir, energy_and_forces_mlir, compile_options_base64 = export_jax_model(
             num_system_atoms=numSystemAtoms,

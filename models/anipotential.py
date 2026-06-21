@@ -25,7 +25,7 @@ from .ani import (
 
 
 class ANI2xPotentialImplFactory(MLPotentialImplFactory):
-    def createImpl(self, name, modelPath=None, **_args):
+    def createImpl(self, name, modelPath=None, **args):
         return ANI2xPotentialImpl(name, modelPath=modelPath)
 
 
@@ -46,7 +46,7 @@ class ANI2xPotentialImpl(MLPotentialImpl):
         periodic_neighborlist: bool = True,
         preprocessing_positions=None,
         preprocessing_positions_unit=unit.nanometer,
-        **_args,
+        **args,
     ):
         # Prepare inputs to the model
 
@@ -134,8 +134,7 @@ class ANI2xPotentialImpl(MLPotentialImpl):
             return energy, -minus_forces
 
         def _forces_kjmol(positions_nm, box_vectors_nm=None):
-            _energy, forces = _energy_and_forces_kjmol(positions_nm, box_vectors_nm)
-            return forces
+            return _energy_and_forces_kjmol(positions_nm, box_vectors_nm)[1]
 
         force_mlir, energy_mlir, energy_and_forces_mlir, compile_options_base64 = export_jax_model(
             num_system_atoms=numSystemAtoms,
@@ -270,7 +269,7 @@ def _energyANI(
     )
     return (
         jnp.sum(
-            model.node_energies(
+            model.local_node_energies(
                 positions,
                 species,
                 radial_neighbor_idx=radial_neighbors.idx,

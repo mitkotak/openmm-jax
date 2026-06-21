@@ -25,6 +25,90 @@ ORB_MODEL_PATHS = {
 }
 ORB_MODEL_NAMES = tuple(ORB_MODEL_PATHS)
 
+def get_neighbors(
+    positions,
+    box=None,
+    *,
+    cutoff: float,
+    cell_atom_threshold: int = 64,
+    cell_capacity_multiplier: float = 2.0,
+    extra_capacity: int = 0,
+    neighbors=None,
+    periodic: bool = False,
+    dr_threshold: float = 0.0,
+):
+    num_atoms = int(positions.shape[0])
+    use_cell_list = periodic and num_atoms >= cell_atom_threshold
+    if periodic:
+        if box is None:
+            raise ValueError("periodic neighbor lists require a box.")
+        jax_box = jnp.swapaxes(jnp.asarray(box, dtype=positions.dtype), -1, -2)
+        displacement, _ = space.periodic_general(
+            jax_box,
+            fractional_coordinates=True,
+        )
+        neighbor_kwargs = {"box": jax_box}
+    else:
+        displacement, _ = space.free()
+        neighbor_kwargs = {}
+
+    if neighbors is not None:
+        return neighbors.update(positions, **neighbor_kwargs)
+
+    neighbor_fn = partition.neighbor_list(
+        displacement,
+        jnp.asarray(1.0, dtype=positions.dtype),
+        float(cutoff),
+        dr_threshold=float(dr_threshold),
+        capacity_multiplier=float(cell_capacity_multiplier),
+        disable_cell_list=not use_cell_list,
+        mask_self=True,
+        fractional_coordinates=periodic,
+        format=partition.NeighborListFormat.Dense,
+    )
+    return neighbor_fn.allocate(
+        positions,
+        extra_capacity=int(extra_capacity),
+        **neighbor_kwargs,
+    )
+
+
+def dense_neighbor_edges(
+    positions,
+    neighbors,
+    *,
+    box_vectors=None,
+    cutoff: float | None = None,
+):
+    num_atoms = positions.shape[0]
+    atom_ids = jnp.arange(num_atoms, dtype=jnp.int32)
+    neighbors = jnp.asarray(neighbors, dtype=jnp.int32)
+    neighbor_mask = (neighbors >= 0) & (neighbors < num_atoms)
+    safe_neighbors = jnp.where(neighbor_mask, neighbors, atom_ids[:, None])
+
+    neighbor_positions = positions[safe_neighbors]
+    if box_vectors is None:
+        edge_vectors = neighbor_positions - positions[:, None, :]
+    else:
+        jax_box = jnp.swapaxes(jnp.asarray(box_vectors, dtype=positions.dtype), -1, -2)
+        displacement, _ = space.periodic_general(
+            jax_box,
+            fractional_coordinates=True,
+        )
+        edge_vectors = space.map_neighbor(displacement)(positions, neighbor_positions)
+
+    distances = jnp.linalg.norm(edge_vectors, axis=-1)
+    edge_mask = neighbor_mask & (safe_neighbors != atom_ids[:, None]) & (distances > 1.0e-8)
+    if cutoff is not None:
+        edge_mask = edge_mask & (distances < cutoff)
+    edge_vectors = jnp.where(edge_mask[..., None], edge_vectors, 0.0)
+    senders = jnp.broadcast_to(atom_ids[:, None], safe_neighbors.shape)
+    return (
+        edge_vectors.reshape(-1, 3),
+        senders.reshape(-1),
+        safe_neighbors.reshape(-1),
+        edge_mask.reshape(-1),
+    )
 
 def polynomial_cutoff(r: Array, r_max: float | Array, p: float) -> Array:
     ratio = r / r_max
@@ -116,92 +200,6 @@ def spherical_harmonics_0_to_3(edge_vectors: Array) -> Array:
     return sh * component_scale
 
 
-def get_neighbors(
-    positions,
-    box=None,
-    *,
-    cutoff: float,
-    cell_atom_threshold: int = 64,
-    cell_capacity_multiplier: float = 2.0,
-    extra_capacity: int = 0,
-    neighbors=None,
-    periodic: bool = False,
-    dr_threshold: float = 0.0,
-):
-    num_atoms = int(positions.shape[0])
-    use_cell_list = periodic and num_atoms >= cell_atom_threshold
-    if periodic:
-        if box is None:
-            raise ValueError("periodic neighbor lists require a box.")
-        jax_box = jnp.swapaxes(jnp.asarray(box, dtype=positions.dtype), -1, -2)
-        displacement, _ = space.periodic_general(
-            jax_box,
-            fractional_coordinates=True,
-        )
-        neighbor_kwargs = {"box": jax_box}
-    else:
-        displacement, _ = space.free()
-        neighbor_kwargs = {}
-
-    if neighbors is not None:
-        return neighbors.update(positions, **neighbor_kwargs)
-
-    neighbor_fn = partition.neighbor_list(
-        displacement,
-        jnp.asarray(1.0, dtype=positions.dtype),
-        float(cutoff),
-        dr_threshold=float(dr_threshold),
-        capacity_multiplier=float(cell_capacity_multiplier),
-        disable_cell_list=not use_cell_list,
-        mask_self=True,
-        fractional_coordinates=periodic,
-        format=partition.NeighborListFormat.Dense,
-    )
-    return neighbor_fn.allocate(
-        positions,
-        extra_capacity=int(extra_capacity),
-        **neighbor_kwargs,
-    )
-
-
-def dense_neighbor_edges(
-    positions,
-    neighbors,
-    *,
-    box_vectors=None,
-    cutoff: float | None = None,
-):
-    num_atoms = positions.shape[0]
-    atom_ids = jnp.arange(num_atoms, dtype=jnp.int32)
-    neighbors = jnp.asarray(neighbors, dtype=jnp.int32)
-    neighbor_mask = (neighbors >= 0) & (neighbors < num_atoms)
-    safe_neighbors = jnp.where(neighbor_mask, neighbors, atom_ids[:, None])
-
-    neighbor_positions = positions[safe_neighbors]
-    if box_vectors is None:
-        edge_vectors = neighbor_positions - positions[:, None, :]
-    else:
-        jax_box = jnp.swapaxes(jnp.asarray(box_vectors, dtype=positions.dtype), -1, -2)
-        displacement, _ = space.periodic_general(
-            jax_box,
-            fractional_coordinates=True,
-        )
-        edge_vectors = space.map_neighbor(displacement)(positions, neighbor_positions)
-
-    distances = jnp.linalg.norm(edge_vectors, axis=-1)
-    edge_mask = neighbor_mask & (safe_neighbors != atom_ids[:, None]) & (distances > 1.0e-8)
-    if cutoff is not None:
-        edge_mask = edge_mask & (distances < cutoff)
-    edge_vectors = jnp.where(edge_mask[..., None], edge_vectors, 0.0)
-    senders = jnp.broadcast_to(atom_ids[:, None], safe_neighbors.shape)
-    return (
-        edge_vectors.reshape(-1, 3),
-        senders.reshape(-1),
-        safe_neighbors.reshape(-1),
-        edge_mask.reshape(-1),
-    )
-
-
 class Linear(eqx.Module):
     weight: Array
     bias: Array
@@ -271,83 +269,6 @@ class MLPNorm(eqx.Module):
         x = self.mlp(x)
         scale = jax.lax.rsqrt(jnp.mean(jnp.square(x), axis=-1, keepdims=True) + self.eps)
         return x * scale * self.norm_weight
-
-def message_passing(
-    model: OrbModel,
-    edge_vectors: Array,
-    species: Array,
-    senders: Array,
-    receivers: Array,
-    edge_mask: Array,
-    total_charge: Array,
-    total_spin: Array,
-) -> Array:
-    distances = safe_norm(edge_vectors, axis=-1)
-    rbfs = bessel_basis(distances, model.rbf_bessel_weights, model.rbf_prefactor)
-    angular = spherical_harmonics_0_to_3(edge_vectors)
-    cutoff = polynomial_cutoff(
-        distances,
-        model.cutoff,
-        model.cutoff_polynomial_p,
-    )
-    cutoff = cutoff[:, None] * edge_mask[:, None].astype(cutoff.dtype)
-    edges_in = (cutoff[:, :, None] * rbfs[:, :, None] * angular[:, None, :]).reshape(
-        (senders.shape[0], model.edge_feature_dim)
-    )
-    nodes_in = model.atom_embedding[species]
-    cond_nodes = condition_nodes(
-        model.charge_embedding,
-        model.spin_embedding,
-        total_charge,
-        total_spin,
-        species.shape[0],
-    )
-
-    nodes = model.encoder_node_fn(nodes_in)
-    edges = model.encoder_edge_fn(edges_in)
-    for layer in model.layers:
-        nodes, edges = layer(nodes, edges, cond_nodes, senders, receivers, cutoff)
-    return nodes
-
-
-def energy_head(model: OrbModel, node_features: Array, species: Array) -> Array:
-    graph_features = jnp.mean(node_features, axis=0, keepdims=True)
-    x = model.energy_mlp(graph_features).reshape(())
-    x = x * jnp.sqrt(model.energy_normalizer_var[0])
-    x = x + model.energy_normalizer_mean[0]
-    x = x * species.shape[0]
-    reference = jnp.sum(model.energy_reference_weight[species])
-    return x + reference
-
-
-def zbl_node_energies(
-    model: OrbModel,
-    positions: Array,
-    species: Array,
-    edge_vectors: Array,
-    senders: Array,
-    receivers: Array,
-    edge_mask: Array,
-) -> Array:
-    num_atoms = species.shape[0]
-    distances = safe_norm(edge_vectors, axis=-1)
-    safe_distances = jnp.maximum(distances, 1.0e-7)
-    z_u = species[senders]
-    z_v = species[receivers]
-    z_u_f = z_u.astype(positions.dtype)
-    z_v_f = z_v.astype(positions.dtype)
-    screening_length = model.zbl_screening_length_scale / (z_u_f**0.300 + z_v_f**0.300)
-    r_over_a = safe_distances / screening_length
-    c = jnp.array([0.1818, 0.5099, 0.2802, 0.02817], dtype=positions.dtype)[:, None]
-    d = jnp.array([3.2, 0.9423, 0.4028, 0.2016], dtype=positions.dtype)[:, None]
-    phi = jnp.sum(c * jnp.exp(-d * r_over_a[None, :]), axis=0)
-    raw = 14.3996 * z_u_f * z_v_f / safe_distances * phi
-    r_max = model.covalent_radii[z_u] + model.covalent_radii[z_v]
-    envelope = polynomial_cutoff(safe_distances, r_max, model.zbl_polynomial_p)
-    per_edge = 0.5 * raw * envelope
-    per_edge = per_edge * edge_mask.astype(per_edge.dtype)
-    per_node = jnp.zeros((num_atoms,), dtype=positions.dtype).at[senders].add(per_edge)
-    return per_node / num_atoms
 
 class OrbLayer(eqx.Module):
     cond_node_proj: Linear
@@ -508,7 +429,97 @@ class OrbModel(eqx.Module):
             dtype=np.dtype(spec["dtype"]),
         )
 
-    def node_energies(
+    def message_passing(
+        self,
+        edge_vectors: Array,
+        species: Array,
+        senders: Array,
+        receivers: Array,
+        edge_mask: Array,
+        total_charge: Array,
+        total_spin: Array,
+    ) -> Array:
+        distances = safe_norm(edge_vectors, axis=-1)
+        rbfs = bessel_basis(distances, self.rbf_bessel_weights, self.rbf_prefactor)
+        angular = spherical_harmonics_0_to_3(edge_vectors)
+        cutoff = polynomial_cutoff(
+            distances,
+            self.cutoff,
+            self.cutoff_polynomial_p,
+        )
+        cutoff = cutoff[:, None] * edge_mask[:, None].astype(cutoff.dtype)
+        edges_in = (cutoff[:, :, None] * rbfs[:, :, None] * angular[:, None, :]).reshape(
+            (senders.shape[0], self.edge_feature_dim)
+        )
+        nodes_in = self.atom_embedding[species]
+        cond_nodes = condition_nodes(
+            self.charge_embedding,
+            self.spin_embedding,
+            total_charge,
+            total_spin,
+            species.shape[0],
+        )
+
+        nodes = self.encoder_node_fn(nodes_in)
+        edges = self.encoder_edge_fn(edges_in)
+        for layer in self.layers:
+            nodes, edges = layer(nodes, edges, cond_nodes, senders, receivers, cutoff)
+        return nodes
+
+    def energy_head(self, node_features: Array, species: Array) -> Array:
+        graph_features = jnp.mean(node_features, axis=0, keepdims=True)
+        x = self.energy_mlp(graph_features).reshape(())
+        x = x * jnp.sqrt(self.energy_normalizer_var[0])
+        x = x + self.energy_normalizer_mean[0]
+        x = x * species.shape[0]
+        reference = jnp.sum(self.energy_reference_weight[species])
+        return x + reference
+
+    def zbl_energy(
+        self,
+        positions: Array,
+        species: Array,
+        edge_vectors: Array,
+        senders: Array,
+        receivers: Array,
+        edge_mask: Array,
+    ) -> Array:
+        num_atoms = species.shape[0]
+        distances = safe_norm(edge_vectors, axis=-1)
+        safe_distances = jnp.maximum(distances, 1.0e-7)
+        z_sender = species[senders]
+        z_receiver = species[receivers]
+        z_sender_f = z_sender.astype(positions.dtype)
+        z_receiver_f = z_receiver.astype(positions.dtype)
+
+        screening_length = self.zbl_screening_length_scale / (
+            z_sender_f**0.300 + z_receiver_f**0.300
+        )
+        scaled_distance = safe_distances / screening_length
+        screening_weights = jnp.array(
+            [0.1818, 0.5099, 0.2802, 0.02817],
+            dtype=positions.dtype,
+        )[:, None]
+        screening_exponents = jnp.array(
+            [3.2, 0.9423, 0.4028, 0.2016],
+            dtype=positions.dtype,
+        )[:, None]
+        zbl_screening = jnp.sum(
+            screening_weights * jnp.exp(-screening_exponents * scaled_distance[None, :]),
+            axis=0,
+        )
+        bare_nuclear_repulsion = 14.3996 * z_sender_f * z_receiver_f / safe_distances
+        cutoff_radius = self.covalent_radii[z_sender] + self.covalent_radii[z_receiver]
+        orb_envelope = polynomial_cutoff(
+            safe_distances,
+            cutoff_radius,
+            self.zbl_polynomial_p,
+        )
+        edge_repulsion = 0.5 * bare_nuclear_repulsion * zbl_screening * orb_envelope
+        edge_repulsion = edge_repulsion * edge_mask.astype(edge_repulsion.dtype)
+        return jnp.sum(edge_repulsion) / num_atoms
+
+    def local_node_features(
         self,
         positions_angstrom: Array,
         species: Array,
@@ -517,15 +528,14 @@ class OrbModel(eqx.Module):
         *,
         neighbor_idx: Array,
         box_vectors: Array | None = None,
-    ) -> Array:
+    ) -> tuple[Array, Array, Array, Array, Array]:
         edge_vectors, senders, receivers, edge_mask = dense_neighbor_edges(
             positions_angstrom,
             neighbor_idx,
             box_vectors=box_vectors,
             cutoff=float(self.cutoff),
         )
-        node_features = message_passing(
-            self,
+        node_features = self.message_passing(
             edge_vectors,
             species,
             senders,
@@ -534,17 +544,7 @@ class OrbModel(eqx.Module):
             total_charge,
             total_spin,
         )
-        graph_energy = energy_head(self, node_features, species)
-        zbl_energies = zbl_node_energies(
-            self,
-            positions_angstrom,
-            species,
-            edge_vectors,
-            senders,
-            receivers,
-            edge_mask,
-        )
-        return graph_energy / species.shape[0] + zbl_energies
+        return node_features, edge_vectors, senders, receivers, edge_mask
 
     def __call__(
         self,
@@ -573,16 +573,25 @@ class OrbModel(eqx.Module):
             )
             neighbor_idx = neighbors.idx
         box_vectors = box_vectors if periodic else None
-        return jnp.sum(
-            self.node_energies(
-                positions_angstrom,
-                species,
-                total_charge,
-                total_spin,
-                neighbor_idx=neighbor_idx,
-                box_vectors=box_vectors,
-            )
+        node_features, edge_vectors, senders, receivers, edge_mask = self.local_node_features(
+            positions_angstrom,
+            species,
+            total_charge,
+            total_spin,
+            neighbor_idx=neighbor_idx,
+            box_vectors=box_vectors,
         )
+        graph_energy = self.energy_head(node_features, species)
+        zbl_energy = self.zbl_energy(
+            positions_angstrom,
+            species,
+            edge_vectors,
+            senders,
+            receivers,
+            edge_mask,
+        )
+        total_energy = graph_energy + zbl_energy
+        return total_energy
 
 
 

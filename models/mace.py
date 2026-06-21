@@ -468,7 +468,7 @@ class MACEModel(eqx.Module):
             for i in range(num_layers)
         ]
 
-    def node_energies(
+    def local_node_energies(
         self,
         positions,
         species,
@@ -532,14 +532,14 @@ class MACEModel(eqx.Module):
             )
             neighbor_idx = neighbors.idx
 
-        return jnp.sum(
-            self.node_energies(
-                positions,
-                species,
-                neighbor_idx=neighbor_idx,
-                box_vectors=box_vectors if periodic else None,
-            )
+        node_energies = self.local_node_energies(
+            positions,
+            species,
+            neighbor_idx=neighbor_idx,
+            box_vectors=box_vectors if periodic else None,
         )
+        local_energy = jnp.sum(node_energies)
+        return local_energy
 
 
 def load_model(

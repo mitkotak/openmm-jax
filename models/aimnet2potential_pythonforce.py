@@ -26,7 +26,7 @@ class AIMNet2PythonForcePotentialImplFactory(MLPotentialImplFactory):
         charge: float = 0.0,
         total_charge: Optional[float] = None,
         multiplicity: int = 1,
-        **_args,
+        **args,
     ):
         return AIMNet2PythonForcePotentialImpl(
             name,
@@ -67,7 +67,7 @@ class AIMNet2PythonForcePotentialImpl(MLPotentialImpl):
         multiplicity: Optional[int] = None,
         preprocessing_positions=None,
         preprocessing_positions_unit=unit.nanometer,
-        **_args,
+        **args,
     ):
         multiplicity = self.multiplicity if multiplicity is None else multiplicity
         if multiplicity != 1:
@@ -157,7 +157,7 @@ class AIMNet2PythonForcePotentialImpl(MLPotentialImpl):
             _ComputeAIMNet2PythonForce(
                 model=model,
                 species=species,
-                d3_data=_prepare_d3_data(model, species_np),
+                d3_data=model.prepare_d3_data(species_np),
                 total_charge=jnp.asarray(model_charge, dtype=jnp.float32),
                 neighbor_list=neighbor_list,
                 lr_neighbor_list=lr_neighbor_list,
@@ -205,29 +205,6 @@ def _initial_box_vectors_angstrom(topology, system, periodic: bool):
     )
 
 
-def _prepare_d3_data(model, species_np):
-    unique_z = np.unique(species_np)
-    z_to_idx = np.zeros(int(unique_z.max()) + 1, dtype=np.int32)
-    for i, z in enumerate(unique_z):
-        z_to_idx[int(z)] = i
-    species_idx = z_to_idx[species_np]
-    unique_z_jax = jnp.asarray(unique_z, dtype=jnp.int32)
-    return {
-        "c6ab": model.d3_c6ab[unique_z_jax[:, None], unique_z_jax[None, :]],
-        "rcov": model.d3_rcov[unique_z_jax],
-        "r2r4": model.d3_r2r4[unique_z_jax],
-        "species_idx": jnp.asarray(species_idx, dtype=jnp.int32),
-        "d3_s6": float(model.d3_s6),
-        "d3_s8": float(model.d3_s8),
-        "d3_a1": float(model.d3_a1),
-        "d3_a2": float(model.d3_a2),
-        "d3_k1": float(model.d3_k1),
-        "d3_k3": float(model.d3_k3),
-        "bohr_a": float(model.bohr_a),
-        "hartree_ev": float(model.hartree_ev),
-    }
-
-
 def allocate_neighbor_list(
     num_atoms: int,
     box_vectors_angstrom,
@@ -244,7 +221,7 @@ def allocate_neighbor_list(
     if periodic:
         if box_vectors_angstrom is None:
             raise ValueError("periodic neighbor-list allocation requires a box.")
-        positions = _fractional_coordinates(positions, box_vectors_angstrom)
+        positions = fractional_coordinates(positions, box_vectors_angstrom)
     return get_neighbors(
         positions,
         box_vectors_angstrom,
@@ -306,11 +283,11 @@ def _energyAIMNet2(
 
 
 def _fractional_positions(positions, box_vectors):
-    fractional = _fractional_coordinates(positions, box_vectors)
+    fractional = fractional_coordinates(positions, box_vectors)
     return fractional - jnp.floor(fractional)
 
 
-def _fractional_coordinates(positions, box_vectors):
+def fractional_coordinates(positions, box_vectors):
     openmm_box = jnp.swapaxes(jnp.asarray(box_vectors, dtype=positions.dtype), -1, -2)
     return space.transform(_restricted_box_inverse(openmm_box), positions)
 
@@ -353,14 +330,14 @@ class _ComputeAIMNet2PythonForce:
         self.lr_neighbor_list = lr_neighbor_list
         self.periodic = bool(periodic)
         self.indices = None if indices is None else np.asarray(indices, dtype=np.int32)
-        self._jax_indices = (
+        self.jax_indices = (
             None if self.indices is None else jnp.asarray(self.indices, dtype=jnp.int32)
         )
         self._energy_and_grad = None
 
     def _energy_kjmol(self, positions_nm, box_vectors_nm=None):
         selected_positions = (
-            positions_nm if self._jax_indices is None else positions_nm[self._jax_indices]
+            positions_nm if self.jax_indices is None else positions_nm[self.jax_indices]
         )
         return _energyAIMNet2(
             selected_positions,

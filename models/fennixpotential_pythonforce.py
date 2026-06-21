@@ -45,7 +45,7 @@ from openmm import unit
 from openmmml.mlpotential import MLPotential, MLPotentialImpl, MLPotentialImplFactory
 
 from .fennixpotential import (
-    FeNNixPotentialImpl as _JaxFeNNixPotentialImpl,
+    FeNNixPotentialImpl as JaxFeNNixPotentialImpl,
 )
 
 
@@ -54,7 +54,7 @@ class FeNNixPotentialImplFactory(MLPotentialImplFactory):
         self,
         name: str,
         modelPath: str | None = None,
-        **_args,
+        **args,
     ) -> MLPotentialImpl:
         return FeNNixPotentialImpl(_base_model_name(name), modelPath)
 
@@ -62,7 +62,7 @@ class FeNNixPotentialImplFactory(MLPotentialImplFactory):
 class FeNNixPotentialImpl(MLPotentialImpl):
     KNOWN_MODELS = {
         name: url
-        for name, url in _JaxFeNNixPotentialImpl.KNOWN_MODELS.items()
+        for name, url in JaxFeNNixPotentialImpl.KNOWN_MODELS.items()
         if not name.endswith("-jax")
     }
 
@@ -192,13 +192,13 @@ class _ComputeFeNNixPythonForce:
         self.use_float64 = bool(use_float64)
         self.coordinate_dtype = jnp.float64 if use_float64 else jnp.float32
         self.indices = None if indices is None else np.asarray(indices, dtype=np.int32)
-        self._jax_indices = (
+        self.jax_indices = (
             None if self.indices is None else jnp.asarray(self.indices, dtype=jnp.int32)
         )
 
     def _energy_and_forces_kjmol(self, positions_nm, box_vectors_nm=None):
         selected_positions = (
-            positions_nm if self._jax_indices is None else positions_nm[self._jax_indices]
+            positions_nm if self.jax_indices is None else positions_nm[self.jax_indices]
         )
         coordinates = (
             selected_positions * unit.nanometer.conversion_factor_to(unit.angstrom)
@@ -215,8 +215,8 @@ class _ComputeFeNNixPythonForce:
         energy, forces = model_outputs[:2]
         energy = energy.squeeze() * self.energy_scale
         forces = forces * self.force_scale
-        if self._jax_indices is not None:
-            forces = jnp.zeros_like(positions_nm).at[self._jax_indices].set(forces)
+        if self.jax_indices is not None:
+            forces = jnp.zeros_like(positions_nm).at[self.jax_indices].set(forces)
         return energy, forces
 
     def __call__(self, state):

@@ -22,7 +22,7 @@ jax.config.update("jax_default_matmul_precision", "highest")
 
 
 class MACEPythonForcePotentialImplFactory(MLPotentialImplFactory):
-    def createImpl(self, name, modelPath=None, **_args):
+    def createImpl(self, name, modelPath=None, **args):
         return MACEPythonForcePotentialImpl(name, modelPath=modelPath)
 
 
@@ -43,7 +43,7 @@ class MACEPythonForcePotentialImpl(MLPotentialImpl):
         periodic_neighborlist: bool = True,
         preprocessing_positions=None,
         preprocessing_positions_unit=unit.nanometer,
-        **_args,
+        **args,
     ):
         includedAtoms = list(topology.atoms())
         if atoms is not None:
@@ -148,7 +148,7 @@ def allocate_neighbor_list(
     if periodic:
         if box_vectors_angstrom is None:
             raise ValueError("periodic neighbor-list allocation requires a box.")
-        positions = _fractional_coordinates(positions, box_vectors_angstrom)
+        positions = fractional_coordinates(positions, box_vectors_angstrom)
     return get_neighbors(
         positions,
         box_vectors_angstrom,
@@ -215,11 +215,11 @@ def _energyMACE(
 
 
 def _fractional_positions(positions, box_vectors):
-    fractional = _fractional_coordinates(positions, box_vectors)
+    fractional = fractional_coordinates(positions, box_vectors)
     return fractional - jnp.floor(fractional)
 
 
-def _fractional_coordinates(positions, box_vectors):
+def fractional_coordinates(positions, box_vectors):
     openmm_box = jnp.swapaxes(jnp.asarray(box_vectors, dtype=positions.dtype), -1, -2)
     return space.transform(_restricted_box_inverse(openmm_box), positions)
 
@@ -256,14 +256,14 @@ class _ComputeMACEPythonForce:
         self.neighbor_list = neighbor_list
         self.periodic = bool(periodic)
         self.indices = None if indices is None else np.asarray(indices, dtype=np.int32)
-        self._jax_indices = (
+        self.jax_indices = (
             None if self.indices is None else jnp.asarray(self.indices, dtype=jnp.int32)
         )
         self._energy_and_grad = None
 
     def _energy_kjmol(self, positions_nm, box_vectors_nm=None):
         selected_positions = (
-            positions_nm if self._jax_indices is None else positions_nm[self._jax_indices]
+            positions_nm if self.jax_indices is None else positions_nm[self.jax_indices]
         )
         return _energyMACE(
             selected_positions,

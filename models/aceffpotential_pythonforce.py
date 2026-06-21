@@ -27,7 +27,7 @@ class AceFFPythonForcePotentialImplFactory(MLPotentialImplFactory):
         modelPath=None,
         charge: float = 0.0,
         total_charge: Optional[float] = None,
-        **_args,
+        **args,
     ):
         return AceFFPythonForcePotentialImpl(
             name,
@@ -64,7 +64,7 @@ class AceFFPythonForcePotentialImpl(MLPotentialImpl):
         periodic_neighborlist: bool = True,
         preprocessing_positions=None,
         preprocessing_positions_unit=unit.nanometer,
-        **_args,
+        **args,
     ):
         includedAtoms = list(topology.atoms())
         if atoms is not None:
@@ -280,14 +280,14 @@ class _ComputeAceFFPythonForce:
         self.neighbor_list = neighbor_list
         self.periodic = bool(periodic)
         self.indices = None if indices is None else np.asarray(indices, dtype=np.int32)
-        self._jax_indices = (
+        self.jax_indices = (
             None if self.indices is None else jnp.asarray(self.indices, dtype=jnp.int32)
         )
         self._energy_and_grad = None
 
     def _energy_kjmol(self, positions_nm, box_vectors_nm=None):
         selected_positions = (
-            positions_nm if self._jax_indices is None else positions_nm[self._jax_indices]
+            positions_nm if self.jax_indices is None else positions_nm[self.jax_indices]
         )
         return _energyAceFF(
             selected_positions,

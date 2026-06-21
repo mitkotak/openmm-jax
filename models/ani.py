@@ -13,13 +13,13 @@ from openmm import unit
 
 jax.config.update("jax_default_matmul_precision", "highest")
 
-_DEFAULT_ENSEMBLE_MODEL_PATH = Path(__file__).resolve().with_name("ani2x_ensemble.eqx")
-_DEFAULT_SINGLE_MODEL_PATH = Path(__file__).resolve().with_name("ani2x_model0.eqx")
+DEFAULT_ENSEMBLE_MODEL_PATH = Path(__file__).resolve().with_name("ani2x_ensemble.eqx")
+DEFAULT_SINGLE_MODEL_PATH = Path(__file__).resolve().with_name("ani2x_model0.eqx")
 ANI2X_MODEL_PATHS = {
-    "ani2x-jax": _DEFAULT_ENSEMBLE_MODEL_PATH,
-    "ani2x-jax-ensemble": _DEFAULT_ENSEMBLE_MODEL_PATH,
-    "ani2x-model-0": _DEFAULT_SINGLE_MODEL_PATH,
-    "ani2x-jax-model0": _DEFAULT_SINGLE_MODEL_PATH,
+    "ani2x-jax": DEFAULT_ENSEMBLE_MODEL_PATH,
+    "ani2x-jax-ensemble": DEFAULT_ENSEMBLE_MODEL_PATH,
+    "ani2x-model-0": DEFAULT_SINGLE_MODEL_PATH,
+    "ani2x-jax-model0": DEFAULT_SINGLE_MODEL_PATH,
 }
 ANI2X_MODEL_NAMES = tuple(ANI2X_MODEL_PATHS)
 HARTREE_TO_KJMOL = (unit.hartree * unit.AVOGADRO_CONSTANT_NA).value_in_unit(
@@ -104,7 +104,7 @@ def piecewise_cutoff(distance, cutoff: float):
     return 0.5 * jnp.cos(distance * jnp.pi / cutoff) + 0.5
 
 
-class _ANI2xCheckpoint(eqx.Module):
+class ANI2xCheckpoint(eqx.Module):
     """Full on-disk ANI2x checkpoint leaves before active-species pruning."""
 
     atom_energies: jnp.ndarray
@@ -209,7 +209,7 @@ class ANI2x(eqx.Module):
         self,
         *,
         config: dict,
-        checkpoint: _ANI2xCheckpoint,
+        checkpoint: ANI2xCheckpoint,
         active_species: tuple[int, ...] | None = None,
     ):
         self.neighbor_cell_atom_threshold = config["neighbor_cell_atom_threshold"]
@@ -278,7 +278,7 @@ class ANI2x(eqx.Module):
             jnp.asarray(atomic_numbers, dtype=jnp.int32)
         ]
 
-    def node_energies(
+    def local_node_energies(
         self,
         positions,
         species,
@@ -467,15 +467,15 @@ class ANI2x(eqx.Module):
                 periodic=periodic,
             )
             angular_neighbor_idx = angular_neighbors.idx
-        return jnp.sum(
-            self.node_energies(
-                positions,
-                species,
-                radial_neighbor_idx=radial_neighbor_idx,
-                angular_neighbor_idx=angular_neighbor_idx,
-                box_vectors=box_vectors if periodic else None,
-            )
+        node_energies = self.local_node_energies(
+            positions,
+            species,
+            radial_neighbor_idx=radial_neighbor_idx,
+            angular_neighbor_idx=angular_neighbor_idx,
+            box_vectors=box_vectors if periodic else None,
         )
+        local_energy = jnp.sum(node_energies)
+        return local_energy
 
 def load_ani2x_model(
     model: str | PathLike = "ani2x-jax-ensemble",
@@ -518,6 +518,6 @@ def load_ani2x_model(
         # Need to first load the whole model and then prune out weights for other species
         return ANI2x(
             config=config,
-            checkpoint=eqx.tree_deserialise_leaves(handle, _ANI2xCheckpoint(config)),
+            checkpoint=eqx.tree_deserialise_leaves(handle, ANI2xCheckpoint(config)),
             active_species=active_species,
         )

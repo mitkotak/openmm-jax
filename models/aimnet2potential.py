@@ -32,7 +32,7 @@ class AIMNet2PotentialImplFactory(MLPotentialImplFactory):
         charge: float = 0.0,
         total_charge: Optional[float] = None,
         multiplicity: int = 1,
-        **_args,
+        **args,
     ):
         return AIMNet2PotentialImpl(
             name,
@@ -73,7 +73,7 @@ class AIMNet2PotentialImpl(MLPotentialImpl):
         multiplicity: Optional[int] = None,
         preprocessing_positions=None,
         preprocessing_positions_unit=unit.nanometer,
-        **_args,
+        **args,
     ):
         multiplicity = self.multiplicity if multiplicity is None else multiplicity
         if multiplicity != 1:
@@ -152,26 +152,7 @@ class AIMNet2PotentialImpl(MLPotentialImpl):
         )
         if model.d3_c6ab is None or model.d3_rcov is None or model.d3_r2r4 is None:
             raise ValueError("AIMNet2 checkpoint does not contain D3 parameters.")
-        unique_z = np.unique(species_np)
-        z_to_idx = np.zeros(int(unique_z.max()) + 1, dtype=np.int32)
-        for i, z in enumerate(unique_z):
-            z_to_idx[int(z)] = i
-        species_idx = z_to_idx[species_np]
-        unique_z_jax = jnp.asarray(unique_z, dtype=jnp.int32)
-        d3_data = {
-            "c6ab": model.d3_c6ab[unique_z_jax[:, None], unique_z_jax[None, :]],
-            "rcov": model.d3_rcov[unique_z_jax],
-            "r2r4": model.d3_r2r4[unique_z_jax],
-            "species_idx": jnp.asarray(species_idx, dtype=jnp.int32),
-            "d3_s6": float(model.d3_s6),
-            "d3_s8": float(model.d3_s8),
-            "d3_a1": float(model.d3_a1),
-            "d3_a2": float(model.d3_a2),
-            "d3_k1": float(model.d3_k1),
-            "d3_k3": float(model.d3_k3),
-            "bohr_a": float(model.bohr_a),
-            "hartree_ev": float(model.hartree_ev),
-        }
+        d3_data = model.prepare_d3_data(species_np)
         model_charge = self.charge if charge is None else charge
         if total_charge is not None:
             model_charge = total_charge
@@ -198,8 +179,7 @@ class AIMNet2PotentialImpl(MLPotentialImpl):
             return energy, -minus_forces
 
         def _forces_kjmol(positions_nm, box_vectors_nm=None):
-            _energy, forces = _energy_and_forces_kjmol(positions_nm, box_vectors_nm)
-            return forces
+            return _energy_and_forces_kjmol(positions_nm, box_vectors_nm)[1]
 
         force_mlir, energy_mlir, energy_and_forces_mlir, compile_options_base64 = export_jax_model(
             num_system_atoms=numSystemAtoms,
