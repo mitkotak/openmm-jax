@@ -16,7 +16,7 @@ cmake --build build --target PythonInstall
 
 ## Supported Models
 
-Currently supporting inference only. Except FeNNiX all other models are implemented from scratch
+Currently supporting inference only. Except FeNNiX all other models are implemented from scratch with no external dependencies.
 
 - FeNNix
 - ANI2x (single, ensemble)
