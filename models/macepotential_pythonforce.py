@@ -99,7 +99,6 @@ class MACEPythonForcePotentialImpl(MLPotentialImpl):
 
 for model_name in MACE_MODEL_NAMES:
     MLPotential.registerImplFactory(f"{model_name}-python", MACEPythonForcePotentialImplFactory())
-MLPotential.registerImplFactory("mace-jax-python", MACEPythonForcePotentialImplFactory())
 
 __all__ = [
     "MLPotential",

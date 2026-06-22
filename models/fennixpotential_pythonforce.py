@@ -49,17 +49,17 @@ from .fennixpotential import (
 )
 
 
-class FeNNixPotentialImplFactory(MLPotentialImplFactory):
+class FeNNixPythonForcePotentialImplFactory(MLPotentialImplFactory):
     def createImpl(
         self,
         name: str,
         modelPath: str | None = None,
         **args,
     ) -> MLPotentialImpl:
-        return FeNNixPotentialImpl(_base_model_name(name), modelPath)
+        return FeNNixPythonForcePotentialImpl(_base_model_name(name), modelPath)
 
 
-class FeNNixPotentialImpl(MLPotentialImpl):
+class FeNNixPythonForcePotentialImpl(MLPotentialImpl):
     KNOWN_MODELS = dict(JaxFeNNixPotentialImpl.KNOWN_MODELS)
 
     def __init__(self, name: str, modelPath: str | None = None) -> None:
@@ -240,14 +240,14 @@ def _base_model_name(name: str) -> str:
     return name
 
 
-for model_name in FeNNixPotentialImpl.KNOWN_MODELS:
+for model_name in FeNNixPythonForcePotentialImpl.KNOWN_MODELS:
     MLPotential.registerImplFactory(
         f"{model_name}-python",
-        FeNNixPotentialImplFactory(),
+        FeNNixPythonForcePotentialImplFactory(),
     )
 
 __all__ = [
     "MLPotential",
-    "FeNNixPotentialImplFactory",
-    "FeNNixPotentialImpl",
+    "FeNNixPythonForcePotentialImplFactory",
+    "FeNNixPythonForcePotentialImpl",
 ]

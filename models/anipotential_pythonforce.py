@@ -12,6 +12,7 @@ from openmm import unit
 from openmmml.mlpotential import MLPotential, MLPotentialImpl, MLPotentialImplFactory
 
 from .ani import (
+    ANI2X_MODEL_NAMES,
     HARTREE_TO_KJMOL,
     get_neighbors,
     load_ani2x_model,
@@ -20,6 +21,8 @@ from .ani import (
 
 class ANI2xPythonForcePotentialImplFactory(MLPotentialImplFactory):
     def createImpl(self, name, modelPath=None, **args):
+        if name.endswith("-python"):
+            name = name[: -len("-python")]
         return ANI2xPythonForcePotentialImpl(name, modelPath=modelPath)
 
 
@@ -53,8 +56,8 @@ class ANI2xPythonForcePotentialImpl(MLPotentialImpl):
 
         model_ref = self.modelPath if modelPath is None else modelPath
         if model_ref is None:
-            if self.name == "ani2x-jax-python":
-                model_ref = "ani2x-jax-model0"
+            if self.name in ANI2X_MODEL_NAMES:
+                model_ref = self.name
             else:
                 raise ValueError("modelPath must be provided for custom ANI2x PythonForce models")
         model = load_ani2x_model(
@@ -111,7 +114,11 @@ class ANI2xPythonForcePotentialImpl(MLPotentialImpl):
         system.addForce(force)
 
 
-MLPotential.registerImplFactory("ani2x-jax-python", ANI2xPythonForcePotentialImplFactory())
+for model_name in ANI2X_MODEL_NAMES:
+    MLPotential.registerImplFactory(
+        f"{model_name}-python",
+        ANI2xPythonForcePotentialImplFactory(),
+    )
 
 __all__ = [
     "MLPotential",

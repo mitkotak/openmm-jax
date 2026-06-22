@@ -141,7 +141,6 @@ class MACEPotentialImpl(MLPotentialImpl):
 
 for model_name in MACE_MODEL_NAMES:
     MLPotential.registerImplFactory(model_name, MACEPotentialImplFactory())
-MLPotential.registerImplFactory("mace-jax", MACEPotentialImplFactory())
 
 __all__ = [
     "MLPotential",
