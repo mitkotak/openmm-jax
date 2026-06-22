@@ -15,29 +15,35 @@ from openmmml.mlpotential import MLPotential
 WATER_DIR = Path(__file__).with_name("water")
 # SIZES = [3, 12, 24, 33, 93, 777, 2661, 6288, 12261, 21384, 98880, 999978]
 SIZES = [93, 777, 2661]
-# CASES = ("mace-off-s(23)", "mace-off-s(23)-python", "mace-off-m(24)", "mace-off-m(24)-python")
-CASES = ("fennix-bio1-small-jax-python", "fennix-bio1-small-jax")
+# CASES = (
+#     "mace-jax-off-s-23",
+#     "mace-jax-off-s-23-python",
+#     "mace-jax-off-m-24",
+#     "mace-jax-off-m-24-python",
+# )
+# CASES = ("fennix-bio1-small-python", "fennix-bio1-small")
 # CASES = ("ani2x-jax-model0", "ani2x-jax-python")
 # CASES = ("aimnet2-jax", "aimnet2-jax-python")
 # CASES = ("aceff-jax-1.1-python", "aceff-jax-1.1")
+CASES = ("so3lr", "fennix-bio1-small")
 
 CASE_LABELS = {
-    "fennix-bio1-small-jax": "FeNNix-S (JaxForce)",
-    "fennix-bio1-small-jax-python": "FeNNiX-S (PythonForce)",
-    "ani2x-jax": "ANI2x-JAX (JaxForce)",
+    "fennix-bio1-small": "FeNNix-S (JaxForce)",
+    "fennix-bio1-small-python": "FeNNiX-S (PythonForce)",
     "ani2x-jax-model0": "ANI2x-JAX model0 (JaxForce)",
     "ani2x-jax-ensemble": "ANI2x-JAX ensemble (JaxForce)",
     "ani2x-jax-python": "ANI2x-JAX model0 (PythonForce)",
     "aimnet2-jax": "AIMNet2-JAX (JaxForce)",
     "aimnet2-jax-python": "AIMNet2-JAX (PythonForce)",
-    "mace-off-s(23)": "MACE-JAX-OFF-S(23) (JaxForce)",
-    "mace-off-m(24)": "MACE-JAX-OFF-M(24) (JaxForce)",
-    "mace-off-s(23)-python": "MACE-JAX-OFF-S(23) (PythonForce)",
-    "mace-off-m(24)-python": "MACE-JAX-OFF-M(24) (PythonForce)",
+    "mace-jax-off-s-23": "MACE-JAX-OFF-S(23) (JaxForce)",
+    "mace-jax-off-m-24": "MACE-JAX-OFF-M(24) (JaxForce)",
+    "mace-jax-off-s-23-python": "MACE-JAX-OFF-S(23) (PythonForce)",
+    "mace-jax-off-m-24-python": "MACE-JAX-OFF-M(24) (PythonForce)",
     "aceff-jax-1.1": "AceFF-JAX-1.1 (JaxForce)",
     "aceff-jax-1.1-python": "AceFF-JAX-1.1 (PythonForce)",
     "aceff-jax-2.0": "AceFF-JAX-2.0 (JaxForce)",
     "aceff-jax-2.0-python": "AceFF-JAX-2.0 (PythonForce)",
+    "so3lr": "SO3LR (JaxForce)"
 }
 TEMP_K = 400.0
 FRICTION_PER_PS = 1.0
@@ -55,87 +61,36 @@ PRODUCTION_STEPS = 100
 def setup_simulation(model_name: str, size: int) -> tuple[Simulation, dict[str, object]]:
     pdb = PDBFile(str(WATER_DIR / f"water_atoms_{size}.pdb"))
     topology = pdb.topology
-    if model_name == "fennix-bio1-small-jax":
+    if model_name == "fennix-bio1-small":
         importlib.import_module("openmmjax_models.fennixpotential")
-        system = MLPotential("fennix-bio1-small-jax").createSystem(
-            topology,
-            removeCMMotion=False,
-            preprocessing_positions=pdb.positions,
-        )
-    elif model_name == "fennix-bio1-small-jax-python":
+    elif model_name == "fennix-bio1-small-python":
         importlib.import_module("openmmjax_models.fennixpotential_pythonforce")
-        system = MLPotential("fennix-bio1-small-jax-python").createSystem(
-            topology,
-            removeCMMotion=False,
-            preprocessing_positions=pdb.positions,
-        )
     elif model_name == "ani2x-jax-python":
         importlib.import_module("openmmjax_models.anipotential_pythonforce")
-        system = MLPotential("ani2x-jax-python").createSystem(
-            topology,
-            removeCMMotion=False,
-            periodic_neighborlist=False,
-            preprocessing_positions=pdb.positions,
-        )
     elif model_name.startswith("ani2x-jax"):
         importlib.import_module("openmmjax_models.anipotential")
-        system = MLPotential(model_name).createSystem(
-            topology,
-            removeCMMotion=False,
-            periodic_neighborlist=False,
-            preprocessing_positions=pdb.positions,
-        )
     elif model_name == "aimnet2-jax":
         importlib.import_module("openmmjax_models.aimnet2potential")
-        system = MLPotential("aimnet2-jax").createSystem(
-            topology,
-            removeCMMotion=False,
-            periodic_neighborlist=False,
-            preprocessing_positions=pdb.positions,
-        )
     elif model_name == "aimnet2-jax-python":
         importlib.import_module("openmmjax_models.aimnet2potential_pythonforce")
-        system = MLPotential("aimnet2-jax-python").createSystem(
-            topology,
-            removeCMMotion=False,
-            periodic_neighborlist=False,
-            preprocessing_positions=pdb.positions,
-        )
-    elif model_name.startswith("mace-off-") and not model_name.endswith("-python"):
+    elif model_name.startswith("mace-jax-off-") and not model_name.endswith("-python"):
         importlib.import_module("openmmjax_models.macepotential")
-        system = MLPotential(model_name).createSystem(
-            topology,
-            removeCMMotion=False,
-            periodic_neighborlist=False,
-            preprocessing_positions=pdb.positions,
-        )
-    elif model_name.startswith("mace-off-") and model_name.endswith("-python"):
+    elif model_name.startswith("mace-jax-off-") and model_name.endswith("-python"):
         importlib.import_module("openmmjax_models.macepotential_pythonforce")
-        system = MLPotential(model_name).createSystem(
-            topology,
-            removeCMMotion=False,
-            periodic_neighborlist=False,
-            preprocessing_positions=pdb.positions,
-        )
     elif model_name.startswith("aceff-") and model_name.endswith("-python"):
         importlib.import_module("openmmjax_models.aceffpotential_pythonforce")
-        system = MLPotential(model_name).createSystem(
-            topology,
-            removeCMMotion=False,
-            periodic_neighborlist=False,
-            preprocessing_positions=pdb.positions,
-        )
     elif model_name.startswith("aceff-"):
         importlib.import_module("openmmjax_models.aceffpotential")
-        system = MLPotential(model_name).createSystem(
+    elif model_name == "so3lr":
+        importlib.import_module("openmmjax_models.so3lrpotential")
+    else:
+        raise ValueError(f"unknown benchmark case: {model_name}")
+    system = MLPotential(model_name).createSystem(
             topology,
             removeCMMotion=False,
             periodic_neighborlist=False,
             preprocessing_positions=pdb.positions,
         )
-    else:
-        raise ValueError(f"unknown benchmark case: {model_name}")
-
     integrator = LangevinMiddleIntegrator(
         TEMP_K * unit.kelvin,
         FRICTION_PER_PS / unit.picosecond,
