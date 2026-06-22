@@ -130,7 +130,6 @@ class OrbPotentialImpl(MLPotentialImpl):
             preprocessing_positions_unit,
         )
         neighbor_list = allocate_neighbor_list(
-            len(includedAtoms),
             allocation_box,
             allocation_positions=allocation_positions,
             cell_atom_threshold=int(model.neighbor_cell_atom_threshold),
@@ -221,7 +220,6 @@ def _energyORB(
 
 
 def allocate_neighbor_list(
-    num_atoms: int,
     allocation_box=None,
     *,
     allocation_positions=None,

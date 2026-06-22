@@ -60,11 +60,7 @@ class FeNNixPotentialImplFactory(MLPotentialImplFactory):
 
 
 class FeNNixPotentialImpl(MLPotentialImpl):
-    KNOWN_MODELS = {
-        name: url
-        for name, url in JaxFeNNixPotentialImpl.KNOWN_MODELS.items()
-        if not name.endswith("-jax")
-    }
+    KNOWN_MODELS = dict(JaxFeNNixPotentialImpl.KNOWN_MODELS)
 
     def __init__(self, name: str, modelPath: str | None = None) -> None:
         self.name = name
@@ -239,27 +235,16 @@ class _ComputeFeNNixPythonForce:
 
 
 def _base_model_name(name: str) -> str:
-    for suffix in ("-jax-python", "-pythonforce", "-python"):
-        if name.endswith(suffix):
-            return name[: -len(suffix)]
+    if name.endswith("-python"):
+        return name[: -len("-python")]
     return name
 
 
 for model_name in FeNNixPotentialImpl.KNOWN_MODELS:
     MLPotential.registerImplFactory(
-        f"{model_name}-jax-python",
-        FeNNixPotentialImplFactory(),
-    )
-    MLPotential.registerImplFactory(
         f"{model_name}-python",
         FeNNixPotentialImplFactory(),
     )
-    MLPotential.registerImplFactory(
-        f"{model_name}-pythonforce",
-        FeNNixPotentialImplFactory(),
-    )
-MLPotential.registerImplFactory("fennix-python", FeNNixPotentialImplFactory())
-MLPotential.registerImplFactory("fennix-pythonforce", FeNNixPotentialImplFactory())
 
 __all__ = [
     "MLPotential",

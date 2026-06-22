@@ -12,7 +12,6 @@ from openmm import unit
 from openmmml.mlpotential import MLPotential, MLPotentialImpl, MLPotentialImplFactory
 
 from .ani import (
-    ANI2X_MODEL_NAMES,
     HARTREE_TO_KJMOL,
     get_neighbors,
     load_ani2x_model,
@@ -54,10 +53,10 @@ class ANI2xPythonForcePotentialImpl(MLPotentialImpl):
 
         model_ref = self.modelPath if modelPath is None else modelPath
         if model_ref is None:
-            if self.name in ANI2X_MODEL_NAMES:
-                model_ref = self.name
-            else:
+            if self.name == "ani2x-jax-python":
                 model_ref = "ani2x-jax-model0"
+            else:
+                raise ValueError("modelPath must be provided for custom ANI2x PythonForce models")
         model = load_ani2x_model(
             model_ref,
             atomic_numbers=species,
@@ -81,7 +80,6 @@ class ANI2xPythonForcePotentialImpl(MLPotentialImpl):
             preprocessing_positions_unit,
         )
         radial_neighbor_list = allocate_neighbor_list(
-            len(includedAtoms),
             allocation_box,
             allocation_positions=allocation_positions,
             cell_atom_threshold=neighbor_cell_atom_threshold,
@@ -90,7 +88,6 @@ class ANI2xPythonForcePotentialImpl(MLPotentialImpl):
             periodic=use_periodic_neighbors,
         )
         angular_neighbor_list = allocate_neighbor_list(
-            len(includedAtoms),
             allocation_box,
             allocation_positions=allocation_positions,
             cell_atom_threshold=neighbor_cell_atom_threshold,
@@ -124,7 +121,6 @@ __all__ = [
 
 
 def allocate_neighbor_list(
-    num_atoms: int,
     box_vectors_angstrom,
     *,
     allocation_positions=None,

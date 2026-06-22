@@ -25,10 +25,10 @@ CASE_LABELS = {
     "mm": "GAFF/TIP3P",
     "ani2x-jax-model0": "ANI2x-JAX model0",
     "ani2x-jax-ensemble": "ANI2x-JAX ensemble",
-    "fennix-bio1-small-jax": "FeNNix-S (JaxForce)",
+    "fennix-bio1-small": "FeNNix-S (JaxForce)",
     "fennix-bio1-small-python": "FeNNix-S (PythonForce)",
-    "mace-off-s(23)": "MACE-OFF-S(23) (JaxForce)",
-    "mace-off-m(24)": "MACE-OFF-M(24) (JaxForce)",
+    "mace-jax-off-s-23": "MACE-OFF-S(23) (JaxForce)",
+    "mace-jax-off-m-24": "MACE-OFF-M(24) (JaxForce)",
     "aimnet2-jax": "AIMNet2-JAX (JaxForce)",
     "aimnet2-jax-python": "AIMNet2-JAX (PythonForce)",
     "aceff-jax-1.1": "AceFF-JAX-1.1 (JaxForce)",
@@ -198,10 +198,10 @@ def run_simulation(
             periodic_neighborlist=False,
             preprocessing_positions=prepared["positions"],
         )
-    elif model_name == "fennix-bio1-small-jax":
+    elif model_name == "fennix-bio1-small":
         importlib.import_module("openmmjax_models.fennixpotential")
         cloned = openmm.XmlSerializer.deserialize(openmm.XmlSerializer.serialize(mm_system))
-        system = MLPotential("fennix-bio1-small-jax").createMixedSystem(
+        system = MLPotential("fennix-bio1-small").createMixedSystem(
             topology,
             cloned,
             ml_atoms,
@@ -210,15 +210,17 @@ def run_simulation(
             preprocessing_positions=prepared["positions"],
         )
     elif model_name == "fennix-bio1-small-python":
-        importlib.import_module("openmmml.models.fennixpotential")
+        importlib.import_module("openmmjax_models.fennixpotential_pythonforce")
         cloned = openmm.XmlSerializer.deserialize(openmm.XmlSerializer.serialize(mm_system))
-        system = MLPotential("fennix-bio1-small").createMixedSystem(
+        system = MLPotential("fennix-bio1-small-python").createMixedSystem(
             topology,
             cloned,
             ml_atoms,
             removeConstraints=True,
+            periodic_neighborlist=False,
+            preprocessing_positions=prepared["positions"],
         )
-    elif model_name.startswith("mace-off-") and model_name.endswith("-python"):
+    elif model_name.startswith("mace-jax-off-") and model_name.endswith("-python"):
         importlib.import_module("openmmjax_models.macepotential_pythonforce")
         cloned = openmm.XmlSerializer.deserialize(openmm.XmlSerializer.serialize(mm_system))
         system = MLPotential(model_name).createMixedSystem(
@@ -229,7 +231,7 @@ def run_simulation(
             periodic_neighborlist=False,
             preprocessing_positions=prepared["positions"],
         )
-    elif model_name.startswith("mace-off-"):
+    elif model_name.startswith("mace-jax-off-"):
         importlib.import_module("openmmjax_models.macepotential")
         cloned = openmm.XmlSerializer.deserialize(openmm.XmlSerializer.serialize(mm_system))
         system = MLPotential(model_name).createMixedSystem(

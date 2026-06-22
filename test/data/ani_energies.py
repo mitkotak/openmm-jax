@@ -41,7 +41,7 @@ for system, path in [
     ),
 ]:
     atoms = ase.io.read(path)
-    for model_name in ["ani2x-model-0", "ani2x-jax-ensemble"]:
+    for model_name in ["ani2x-jax-model0", "ani2x-jax-ensemble"]:
         results[f"{system}/{model_name}"] = compute_energy(atoms, model_name)
 
 for key in results:

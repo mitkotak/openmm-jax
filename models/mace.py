@@ -26,8 +26,6 @@ HARTREE_TO_KJMOL = (unit.hartree * unit.AVOGADRO_CONSTANT_NA).value_in_unit(
 MACE_MODEL_PATHS = {
     "mace-jax-off-s-23": Path(__file__).resolve().parent / "mace-off-s(23).eqx",
     "mace-jax-off-m-24": Path(__file__).resolve().parent / "mace-off-m(24).eqx",
-    "mace-off-s(23)": Path(__file__).resolve().parent / "mace-off-s(23).eqx",
-    "mace-off-m(24)": Path(__file__).resolve().parent / "mace-off-m(24).eqx",
 }
 MACE_MODEL_NAMES = tuple(MACE_MODEL_PATHS)
 
@@ -543,7 +541,7 @@ class MACE(eqx.Module):
 
 
 def load_model(
-    model: str | PathLike = "mace-off-s(23)",
+    model: str | PathLike = "mace-jax-off-s-23",
     *,
     model_path: str | PathLike | None = None,
     dtype: Any = jnp.float32,

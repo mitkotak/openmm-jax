@@ -16,9 +16,7 @@ jax.config.update("jax_default_matmul_precision", "highest")
 DEFAULT_ENSEMBLE_MODEL_PATH = Path(__file__).resolve().with_name("ani2x_ensemble.eqx")
 DEFAULT_SINGLE_MODEL_PATH = Path(__file__).resolve().with_name("ani2x_model0.eqx")
 ANI2X_MODEL_PATHS = {
-    "ani2x-jax": DEFAULT_ENSEMBLE_MODEL_PATH,
     "ani2x-jax-ensemble": DEFAULT_ENSEMBLE_MODEL_PATH,
-    "ani2x-model-0": DEFAULT_SINGLE_MODEL_PATH,
     "ani2x-jax-model0": DEFAULT_SINGLE_MODEL_PATH,
 }
 ANI2X_MODEL_NAMES = tuple(ANI2X_MODEL_PATHS)

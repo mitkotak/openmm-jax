@@ -99,7 +99,6 @@ class ANI2xPotentialImpl(MLPotentialImpl):
             preprocessing_positions_unit,
         )
         radial_neighbor_list = allocate_neighbor_list(
-            len(includedAtoms),
             allocation_box,
             allocation_positions=allocation_positions,
             cell_atom_threshold=neighbor_cell_atom_threshold,
@@ -108,7 +107,6 @@ class ANI2xPotentialImpl(MLPotentialImpl):
             periodic=forcePeriodic,
         )
         angular_neighbor_list = allocate_neighbor_list(
-            len(includedAtoms),
             allocation_box,
             allocation_positions=allocation_positions,
             cell_atom_threshold=neighbor_cell_atom_threshold,
@@ -167,7 +165,6 @@ __all__ = [
 
 
 def allocate_neighbor_list(
-    num_atoms: int,
     allocation_box=None,
     *,
     allocation_positions=None,

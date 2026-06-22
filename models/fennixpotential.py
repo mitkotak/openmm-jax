@@ -47,22 +47,6 @@ class FeNNixPotentialImpl(MLPotentialImpl):
             "https://raw.githubusercontent.com/FeNNol-tools/FeNNol-PMC/main/"
             "FENNIX-BIO1/v1.0-finetuneIons/fennix-bio1M-finetuneIons.fnx"
         ),
-        "fennix-bio1-small-jax": (
-            "https://raw.githubusercontent.com/FeNNol-tools/FeNNol-PMC/main/"
-            "FENNIX-BIO1/v1.0/fennix-bio1S.fnx"
-        ),
-        "fennix-bio1-medium-jax": (
-            "https://raw.githubusercontent.com/FeNNol-tools/FeNNol-PMC/main/"
-            "FENNIX-BIO1/v1.0/fennix-bio1M.fnx"
-        ),
-        "fennix-bio1-small-finetune-ions-jax": (
-            "https://raw.githubusercontent.com/FeNNol-tools/FeNNol-PMC/main/"
-            "FENNIX-BIO1/v1.0-finetuneIons/fennix-bio1S-finetuneIons.fnx"
-        ),
-        "fennix-bio1-medium-finetune-ions-jax": (
-            "https://raw.githubusercontent.com/FeNNol-tools/FeNNol-PMC/main/"
-            "FENNIX-BIO1/v1.0-finetuneIons/fennix-bio1M-finetuneIons.fnx"
-        ),
     }
 
     def __init__(self, name: str, modelPath: str | None = None) -> None:
@@ -255,7 +239,6 @@ class FeNNixPotentialImpl(MLPotentialImpl):
 
 for model_name in FeNNixPotentialImpl.KNOWN_MODELS:
     MLPotential.registerImplFactory(model_name, FeNNixPotentialImplFactory())
-MLPotential.registerImplFactory("fennix-jax", FeNNixPotentialImplFactory())
 
 __all__ = [
     "MLPotential",

@@ -16,7 +16,7 @@ cuda_platform = mm.Platform.getPlatformByName("CUDA")
 pytestmark = pytest.mark.skipif(cuda_platform is None, reason="CUDA platform is not available")
 
 test_data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
-ani_model_names = ("ani2x-model-0", "ani2x-jax-ensemble")
+ani_model_names = ("ani2x-jax-model0", "ani2x-jax-ensemble")
 available_models = [model for model in ani_model_names if ANI2X_MODEL_PATHS[model].is_file()]
 
 

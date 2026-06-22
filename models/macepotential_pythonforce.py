@@ -75,7 +75,6 @@ class MACEPythonForcePotentialImpl(MLPotentialImpl):
             preprocessing_positions_unit,
         )
         neighbor_list = allocate_neighbor_list(
-            len(includedAtoms),
             allocation_box,
             allocation_positions=allocation_positions,
             cell_atom_threshold=int(model.neighbor_cell_atom_threshold),
@@ -133,7 +132,6 @@ def _initial_box_vectors_angstrom(topology, system, periodic: bool):
 
 
 def allocate_neighbor_list(
-    num_atoms: int,
     box_vectors_angstrom,
     *,
     allocation_positions=None,
