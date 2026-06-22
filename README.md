@@ -24,6 +24,7 @@ Currently supporting inference only. Except FeNNiX all other models are implemen
 - AIMNet2
 - AceFF (1.1, 2.0)
 - OrbV3 (Omol conservative)
+- SO3LR
 
 ## Design Notes
 
