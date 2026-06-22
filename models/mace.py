@@ -259,7 +259,7 @@ class SymmetricContraction(eqx.Module):
         return out0, out1
 
 
-class FullMACELayer(eqx.Module):
+class MACELayer(eqx.Module):
     linear_up0: Linear
     linear_up1: Linear
     radial_mlp: MLP
@@ -405,9 +405,9 @@ class FullMACELayer(eqx.Module):
         return out0, out1, e
 
 
-class MACEModel(eqx.Module):
+class MACE(eqx.Module):
     embedding: Array
-    layers: list[FullMACELayer]
+    layers: list[MACELayer]
     offsets: Array
     sh_coeffs: Array
     name: str = eqx.field(static=True)
@@ -449,7 +449,7 @@ class MACEModel(eqx.Module):
         self.embedding = jax.random.normal(keys[0], (self.num_species, self.num_features), dtype)
         self.sh_coeffs = jnp.zeros((sum(self.sh_dims), len(self.sh_monomials)), dtype=dtype)
         self.layers = [
-            FullMACELayer(
+            MACELayer(
                 self.num_features,
                 self.num_species,
                 self.num_radial_basis,
@@ -543,22 +543,21 @@ class MACEModel(eqx.Module):
 
 
 def load_model(
-    model: str | PathLike = "mace-off-m(24)",
+    model: str | PathLike = "mace-off-s(23)",
     *,
     model_path: str | PathLike | None = None,
     dtype: Any = jnp.float32,
     neighbor_cell_atom_threshold: int | None = None,
     neighbor_cell_capacity_multiplier: float | None = None,
-) -> MACEModel:
+) -> MACE:
     if model_path is not None:
         path = Path(model_path)
     elif isinstance(model, PathLike):
         path = Path(model)
-    else:
-        if model not in MACE_MODEL_PATHS:
-            choices = ", ".join(sorted(MACE_MODEL_PATHS))
-            raise ValueError(f"Unknown MACE model {model!r}. Expected one of: {choices}")
+    elif model in MACE_MODEL_PATHS:
         path = MACE_MODEL_PATHS[model]
+    else:
+        path = Path(model)
 
     with path.open("rb") as handle:
         config = json.loads(handle.readline().decode())
@@ -569,7 +568,7 @@ def load_model(
             config["neighbor_cell_capacity_multiplier"] = float(
                 neighbor_cell_capacity_multiplier
             )
-        template = MACEModel(
+        template = MACE(
             np.zeros((config["num_species"],), dtype=np.float32),
             config,
             dtype=jnp.float32,
@@ -579,6 +578,8 @@ def load_model(
     if dtype == jnp.float32:
         return loaded
     return jax.tree_util.tree_map(
-        lambda x: x.astype(dtype) if eqx.is_array(x) and jnp.issubdtype(x.dtype, jnp.floating) else x,
+        lambda x: x.astype(dtype)
+        if eqx.is_array(x) and jnp.issubdtype(x.dtype, jnp.floating)
+        else x,
         loaded,
     )

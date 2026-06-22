@@ -270,7 +270,7 @@ class MLPNorm(eqx.Module):
         scale = jax.lax.rsqrt(jnp.mean(jnp.square(x), axis=-1, keepdims=True) + self.eps)
         return x * scale * self.norm_weight
 
-class OrbLayer(eqx.Module):
+class AttentionBlock(eqx.Module):
     cond_node_proj: Linear
     receive_attn: Linear
     send_attn: Linear
@@ -312,9 +312,7 @@ class OrbLayer(eqx.Module):
         return nodes_cond + updated_nodes, edges + updated_edges
 
 
-class OrbModel(eqx.Module):
-    """ORB v3 conservative OMol model loaded from an Equinox checkpoint."""
-
+class ORBLayer(eqx.Module):
     rbf_bessel_weights: Array
     rbf_prefactor: Array
     atom_embedding: Array
@@ -322,12 +320,213 @@ class OrbModel(eqx.Module):
     spin_embedding: Array
     encoder_node_fn: MLPNorm
     encoder_edge_fn: MLPNorm
-    layers: tuple[OrbLayer, ...]
+    blocks: tuple[AttentionBlock, ...]
+    num_layers: int = eqx.field(static=True)
+    mlp_num_layers: int = eqx.field(static=True)
+    edge_feature_dim: int = eqx.field(static=True)
+    cutoff: float = eqx.field(static=True)
+    cutoff_polynomial_p: float = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        config: dict[str, Any],
+        cutoff: float,
+        num_layers: int,
+        mlp_num_layers: int,
+        edge_feature_dim: int,
+        cutoff_polynomial_p: float,
+    ) -> None:
+        self.num_layers = int(num_layers)
+        self.mlp_num_layers = int(mlp_num_layers)
+        self.edge_feature_dim = int(edge_feature_dim)
+        self.cutoff = float(cutoff)
+        self.cutoff_polynomial_p = float(cutoff_polynomial_p)
+
+        spec = config["params"]["model.rbf_transform.bessel_weights"]
+        self.rbf_bessel_weights = jnp.zeros(
+            tuple(spec["shape"]),
+            dtype=np.dtype(spec["dtype"]),
+        )
+        spec = config["params"]["model.rbf_transform.prefactor"]
+        self.rbf_prefactor = jnp.zeros(
+            tuple(spec["shape"]),
+            dtype=np.dtype(spec["dtype"]),
+        )
+        spec = config["params"]["model.atom_emb.embeddings.weight"]
+        self.atom_embedding = jnp.zeros(
+            tuple(spec["shape"]),
+            dtype=np.dtype(spec["dtype"]),
+        )
+        spec = config["params"]["model.conditioner.charge_embedding.W"]
+        self.charge_embedding = jnp.zeros(
+            tuple(spec["shape"]),
+            dtype=np.dtype(spec["dtype"]),
+        )
+        spec = config["params"]["model.conditioner.spin_embedding.W"]
+        self.spin_embedding = jnp.zeros(
+            tuple(spec["shape"]),
+            dtype=np.dtype(spec["dtype"]),
+        )
+        self.encoder_node_fn = MLPNorm(config, "model._encoder._node_fn")
+        self.encoder_edge_fn = MLPNorm(config, "model._encoder._edge_fn")
+        self.blocks = tuple(
+            AttentionBlock(config, f"model.gnn_stacks.{i}")
+            for i in range(self.num_layers)
+        )
+
+    def __call__(
+        self,
+        edge_vectors: Array,
+        species: Array,
+        senders: Array,
+        receivers: Array,
+        edge_mask: Array,
+        total_charge: Array,
+        total_spin: Array,
+    ) -> Array:
+        distances = safe_norm(edge_vectors, axis=-1)
+        rbfs = bessel_basis(distances, self.rbf_bessel_weights, self.rbf_prefactor)
+        angular = spherical_harmonics_0_to_3(edge_vectors)
+        cutoff = polynomial_cutoff(
+            distances,
+            self.cutoff,
+            self.cutoff_polynomial_p,
+        )
+        cutoff = cutoff[:, None] * edge_mask[:, None].astype(cutoff.dtype)
+        edges_in = (cutoff[:, :, None] * rbfs[:, :, None] * angular[:, None, :]).reshape(
+            (senders.shape[0], self.edge_feature_dim)
+        )
+        nodes_in = self.atom_embedding[species]
+        cond_nodes = condition_nodes(
+            self.charge_embedding,
+            self.spin_embedding,
+            total_charge,
+            total_spin,
+            species.shape[0],
+        )
+
+        nodes = self.encoder_node_fn(nodes_in)
+        edges = self.encoder_edge_fn(edges_in)
+        for block in self.blocks:
+            nodes, edges = block(nodes, edges, cond_nodes, senders, receivers, cutoff)
+        return nodes
+
+
+class EnergyHead(eqx.Module):
     energy_mlp: MLP
     energy_normalizer_var: Array
     energy_normalizer_mean: Array
     energy_reference_weight: Array
+    energy_mlp_num_layers: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        config: dict[str, Any],
+        energy_mlp_num_layers: int,
+    ) -> None:
+        self.energy_mlp_num_layers = int(energy_mlp_num_layers)
+        self.energy_mlp = MLP(
+            config,
+            "heads.energy.mlp",
+            self.energy_mlp_num_layers,
+        )
+        spec = config["params"]["heads.energy.normalizer.bn.running_var"]
+        self.energy_normalizer_var = jnp.zeros(
+            tuple(spec["shape"]),
+            dtype=np.dtype(spec["dtype"]),
+        )
+        spec = config["params"]["heads.energy.normalizer.bn.running_mean"]
+        self.energy_normalizer_mean = jnp.zeros(
+            tuple(spec["shape"]),
+            dtype=np.dtype(spec["dtype"]),
+        )
+        spec = config["params"]["heads.energy.reference.linear.weight"]
+        self.energy_reference_weight = jnp.zeros(
+            tuple(spec["shape"]),
+            dtype=np.dtype(spec["dtype"]),
+        )
+
+    def __call__(self, node_features: Array, species: Array) -> Array:
+        graph_features = jnp.mean(node_features, axis=0, keepdims=True)
+        x = self.energy_mlp(graph_features).reshape(())
+        x = x * jnp.sqrt(self.energy_normalizer_var[0])
+        x = x + self.energy_normalizer_mean[0]
+        x = x * species.shape[0]
+        reference = jnp.sum(self.energy_reference_weight[species])
+        return x + reference
+
+
+class ZBLRepulsion(eqx.Module):
     covalent_radii: Array
+    zbl_polynomial_p: float = eqx.field(static=True)
+    zbl_screening_length_scale: float = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        config: dict[str, Any],
+        zbl_polynomial_p: float,
+        zbl_screening_length_scale: float,
+    ) -> None:
+        self.zbl_polynomial_p = float(zbl_polynomial_p)
+        self.zbl_screening_length_scale = float(zbl_screening_length_scale)
+        spec = config["params"]["covalent_radii"]
+        self.covalent_radii = jnp.zeros(
+            tuple(spec["shape"]),
+            dtype=np.dtype(spec["dtype"]),
+        )
+
+    def __call__(
+        self,
+        positions: Array,
+        species: Array,
+        edge_vectors: Array,
+        senders: Array,
+        receivers: Array,
+        edge_mask: Array,
+    ) -> Array:
+        num_atoms = species.shape[0]
+        distances = safe_norm(edge_vectors, axis=-1)
+        safe_distances = jnp.maximum(distances, 1.0e-7)
+        z_sender = species[senders]
+        z_receiver = species[receivers]
+        z_sender_f = z_sender.astype(positions.dtype)
+        z_receiver_f = z_receiver.astype(positions.dtype)
+
+        screening_length = self.zbl_screening_length_scale / (
+            z_sender_f**0.300 + z_receiver_f**0.300
+        )
+        scaled_distance = safe_distances / screening_length
+        screening_weights = jnp.array(
+            [0.1818, 0.5099, 0.2802, 0.02817],
+            dtype=positions.dtype,
+        )[:, None]
+        screening_exponents = jnp.array(
+            [3.2, 0.9423, 0.4028, 0.2016],
+            dtype=positions.dtype,
+        )[:, None]
+        zbl_screening = jnp.sum(
+            screening_weights * jnp.exp(-screening_exponents * scaled_distance[None, :]),
+            axis=0,
+        )
+        bare_nuclear_repulsion = 14.3996 * z_sender_f * z_receiver_f / safe_distances
+        cutoff_radius = self.covalent_radii[z_sender] + self.covalent_radii[z_receiver]
+        orb_envelope = polynomial_cutoff(
+            safe_distances,
+            cutoff_radius,
+            self.zbl_polynomial_p,
+        )
+        edge_repulsion = 0.5 * bare_nuclear_repulsion * zbl_screening * orb_envelope
+        edge_repulsion = edge_repulsion * edge_mask.astype(edge_repulsion.dtype)
+        return jnp.sum(edge_repulsion) / num_atoms
+
+
+class Orb(eqx.Module):
+    layer: ORBLayer
+    energy_head: EnergyHead
+    zbl_repulsion: ZBLRepulsion
     name: str = eqx.field(static=True)
     cutoff: float = eqx.field(static=True)
     ev_to_kjmol: float = eqx.field(static=True)
@@ -372,152 +571,23 @@ class OrbModel(eqx.Module):
             config.get("zbl_screening_length_scale", 0.4543 * 0.529)
         )
 
-        spec = config["params"]["model.rbf_transform.bessel_weights"]
-        self.rbf_bessel_weights = jnp.zeros(
-            tuple(spec["shape"]),
-            dtype=np.dtype(spec["dtype"]),
+        self.layer = ORBLayer(
+            config=config,
+            cutoff=self.cutoff,
+            num_layers=self.num_layers,
+            mlp_num_layers=self.mlp_num_layers,
+            edge_feature_dim=self.edge_feature_dim,
+            cutoff_polynomial_p=self.cutoff_polynomial_p,
         )
-        spec = config["params"]["model.rbf_transform.prefactor"]
-        self.rbf_prefactor = jnp.zeros(
-            tuple(spec["shape"]),
-            dtype=np.dtype(spec["dtype"]),
+        self.energy_head = EnergyHead(
+            config=config,
+            energy_mlp_num_layers=self.energy_mlp_num_layers,
         )
-        spec = config["params"]["model.atom_emb.embeddings.weight"]
-        self.atom_embedding = jnp.zeros(
-            tuple(spec["shape"]),
-            dtype=np.dtype(spec["dtype"]),
+        self.zbl_repulsion = ZBLRepulsion(
+            config=config,
+            zbl_polynomial_p=self.zbl_polynomial_p,
+            zbl_screening_length_scale=self.zbl_screening_length_scale,
         )
-        spec = config["params"]["model.conditioner.charge_embedding.W"]
-        self.charge_embedding = jnp.zeros(
-            tuple(spec["shape"]),
-            dtype=np.dtype(spec["dtype"]),
-        )
-        spec = config["params"]["model.conditioner.spin_embedding.W"]
-        self.spin_embedding = jnp.zeros(
-            tuple(spec["shape"]),
-            dtype=np.dtype(spec["dtype"]),
-        )
-        self.encoder_node_fn = MLPNorm(config, "model._encoder._node_fn")
-        self.encoder_edge_fn = MLPNorm(config, "model._encoder._edge_fn")
-        self.layers = tuple(
-            OrbLayer(config, f"model.gnn_stacks.{i}")
-            for i in range(self.num_layers)
-        )
-        self.energy_mlp = MLP(
-            config,
-            "heads.energy.mlp",
-            self.energy_mlp_num_layers,
-        )
-        spec = config["params"]["heads.energy.normalizer.bn.running_var"]
-        self.energy_normalizer_var = jnp.zeros(
-            tuple(spec["shape"]),
-            dtype=np.dtype(spec["dtype"]),
-        )
-        spec = config["params"]["heads.energy.normalizer.bn.running_mean"]
-        self.energy_normalizer_mean = jnp.zeros(
-            tuple(spec["shape"]),
-            dtype=np.dtype(spec["dtype"]),
-        )
-        spec = config["params"]["heads.energy.reference.linear.weight"]
-        self.energy_reference_weight = jnp.zeros(
-            tuple(spec["shape"]),
-            dtype=np.dtype(spec["dtype"]),
-        )
-        spec = config["params"]["covalent_radii"]
-        self.covalent_radii = jnp.zeros(
-            tuple(spec["shape"]),
-            dtype=np.dtype(spec["dtype"]),
-        )
-
-    def message_passing(
-        self,
-        edge_vectors: Array,
-        species: Array,
-        senders: Array,
-        receivers: Array,
-        edge_mask: Array,
-        total_charge: Array,
-        total_spin: Array,
-    ) -> Array:
-        distances = safe_norm(edge_vectors, axis=-1)
-        rbfs = bessel_basis(distances, self.rbf_bessel_weights, self.rbf_prefactor)
-        angular = spherical_harmonics_0_to_3(edge_vectors)
-        cutoff = polynomial_cutoff(
-            distances,
-            self.cutoff,
-            self.cutoff_polynomial_p,
-        )
-        cutoff = cutoff[:, None] * edge_mask[:, None].astype(cutoff.dtype)
-        edges_in = (cutoff[:, :, None] * rbfs[:, :, None] * angular[:, None, :]).reshape(
-            (senders.shape[0], self.edge_feature_dim)
-        )
-        nodes_in = self.atom_embedding[species]
-        cond_nodes = condition_nodes(
-            self.charge_embedding,
-            self.spin_embedding,
-            total_charge,
-            total_spin,
-            species.shape[0],
-        )
-
-        nodes = self.encoder_node_fn(nodes_in)
-        edges = self.encoder_edge_fn(edges_in)
-        for layer in self.layers:
-            nodes, edges = layer(nodes, edges, cond_nodes, senders, receivers, cutoff)
-        return nodes
-
-    def energy_head(self, node_features: Array, species: Array) -> Array:
-        graph_features = jnp.mean(node_features, axis=0, keepdims=True)
-        x = self.energy_mlp(graph_features).reshape(())
-        x = x * jnp.sqrt(self.energy_normalizer_var[0])
-        x = x + self.energy_normalizer_mean[0]
-        x = x * species.shape[0]
-        reference = jnp.sum(self.energy_reference_weight[species])
-        return x + reference
-
-    def zbl_energy(
-        self,
-        positions: Array,
-        species: Array,
-        edge_vectors: Array,
-        senders: Array,
-        receivers: Array,
-        edge_mask: Array,
-    ) -> Array:
-        num_atoms = species.shape[0]
-        distances = safe_norm(edge_vectors, axis=-1)
-        safe_distances = jnp.maximum(distances, 1.0e-7)
-        z_sender = species[senders]
-        z_receiver = species[receivers]
-        z_sender_f = z_sender.astype(positions.dtype)
-        z_receiver_f = z_receiver.astype(positions.dtype)
-
-        screening_length = self.zbl_screening_length_scale / (
-            z_sender_f**0.300 + z_receiver_f**0.300
-        )
-        scaled_distance = safe_distances / screening_length
-        screening_weights = jnp.array(
-            [0.1818, 0.5099, 0.2802, 0.02817],
-            dtype=positions.dtype,
-        )[:, None]
-        screening_exponents = jnp.array(
-            [3.2, 0.9423, 0.4028, 0.2016],
-            dtype=positions.dtype,
-        )[:, None]
-        zbl_screening = jnp.sum(
-            screening_weights * jnp.exp(-screening_exponents * scaled_distance[None, :]),
-            axis=0,
-        )
-        bare_nuclear_repulsion = 14.3996 * z_sender_f * z_receiver_f / safe_distances
-        cutoff_radius = self.covalent_radii[z_sender] + self.covalent_radii[z_receiver]
-        orb_envelope = polynomial_cutoff(
-            safe_distances,
-            cutoff_radius,
-            self.zbl_polynomial_p,
-        )
-        edge_repulsion = 0.5 * bare_nuclear_repulsion * zbl_screening * orb_envelope
-        edge_repulsion = edge_repulsion * edge_mask.astype(edge_repulsion.dtype)
-        return jnp.sum(edge_repulsion) / num_atoms
 
     def local_node_features(
         self,
@@ -535,7 +605,7 @@ class OrbModel(eqx.Module):
             box_vectors=box_vectors,
             cutoff=float(self.cutoff),
         )
-        node_features = self.message_passing(
+        node_features = self.layer(
             edge_vectors,
             species,
             senders,
@@ -582,7 +652,7 @@ class OrbModel(eqx.Module):
             box_vectors=box_vectors,
         )
         graph_energy = self.energy_head(node_features, species)
-        zbl_energy = self.zbl_energy(
+        zbl_energy = self.zbl_repulsion(
             positions_angstrom,
             species,
             edge_vectors,
@@ -594,15 +664,13 @@ class OrbModel(eqx.Module):
         return total_energy
 
 
-
-
 def load_orb_model(
     model: str | PathLike = "orb-jax-v3-conservative-omol",
     *,
     model_path: str | PathLike | None = None,
     neighbor_cell_atom_threshold: int | None = None,
     neighbor_cell_capacity_multiplier: float | None = None,
-) -> OrbModel:
+) -> Orb:
     if model_path is not None:
         path = Path(model_path)
     elif isinstance(model, PathLike):
@@ -611,8 +679,6 @@ def load_orb_model(
         path = ORB_MODEL_PATHS[model]
     else:
         path = Path(model)
-    if not path.is_file():
-        raise FileNotFoundError(f"ORB .eqx checkpoint not found: {path}")
 
     with path.open("rb") as handle:
         config = dict(json.loads(handle.readline().decode()))
@@ -622,4 +688,4 @@ def load_orb_model(
             config["neighbor_cell_capacity_multiplier"] = float(
                 neighbor_cell_capacity_multiplier
             )
-        return eqx.tree_deserialise_leaves(handle, OrbModel(config=config))
+        return eqx.tree_deserialise_leaves(handle, Orb(config=config))

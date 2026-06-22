@@ -89,20 +89,14 @@ class AIMNet2PotentialImpl(MLPotentialImpl):
         model_ref = modelPath if modelPath is not None else self.modelPath
         if model_ref is None:
             if self.name in AIMNET2_MODEL_NAMES:
-                model = load_aimnet2_model(
-                    self.name,
-                    neighbor_cell_atom_threshold=neighbor_cell_atom_threshold,
-                    neighbor_cell_capacity_multiplier=neighbor_cell_capacity_multiplier,
-                )
+                model_ref = self.name
             else:
                 raise ValueError("modelPath must be provided for custom AIMNet2 models")
-        else:
-            model = load_aimnet2_model(
-                self.name,
-                model_path=model_ref,
-                neighbor_cell_atom_threshold=neighbor_cell_atom_threshold,
-                neighbor_cell_capacity_multiplier=neighbor_cell_capacity_multiplier,
-            )
+        model = load_aimnet2_model(
+            model_ref,
+            neighbor_cell_atom_threshold=neighbor_cell_atom_threshold,
+            neighbor_cell_capacity_multiplier=neighbor_cell_capacity_multiplier,
+        )
         unsupported = sorted(set(species_np.tolist()) - set(model.implemented_species))
         if unsupported:
             supported = ", ".join(str(z) for z in model.implemented_species)

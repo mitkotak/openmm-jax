@@ -284,50 +284,6 @@ def _exp_cutoff(d: Array, rc: float, exp_minus_1: float) -> Array:
     return jnp.exp(-1.0 / (1.0 - x**2)) / exp_minus_1
 
 
-def atomic_embedding_features(
-    atomic_embeddings: Array, g_ijs: Array, unit_vectors: Array, vector_weights: Array,
-    neighbors: Array, edge_mask: Array,
-) -> Array:
-    neighbor_embeddings = atomic_embeddings[neighbors]
-    neighbor_embeddings = jnp.where(edge_mask[..., None, None], neighbor_embeddings, 0.0)
-    scalar_features = jnp.sum(neighbor_embeddings * g_ijs[:, :, None, :], axis=1)
-    vector_features = jnp.einsum(
-        "nkag,nkg,nkd->nagd",
-        neighbor_embeddings,
-        g_ijs,
-        unit_vectors,
-    )
-    num_atoms = atomic_embeddings.shape[0]
-    scalar_features = scalar_features.reshape(num_atoms, -1)
-    vector_features = jnp.einsum("agh,nagd->nahd", vector_weights, vector_features)
-    vector_features = jnp.sum(vector_features**2, axis=-1).reshape(num_atoms, -1)
-    return jnp.concatenate([scalar_features, vector_features], axis=-1)
-
-
-def charge_features(
-    partial_charges: Array, g_ijs: Array, unit_vectors: Array, vector_weights: Array,
-    neighbors: Array, edge_mask: Array,
-) -> Array:
-    neighbor_charges = partial_charges[neighbors]
-    neighbor_charges = jnp.where(edge_mask[..., None], neighbor_charges, 0.0)
-    scalar_features = jnp.einsum("nka,nkg->nag", neighbor_charges, g_ijs)
-    vector_features = jnp.einsum("nka,nkg,nkd->nagd", neighbor_charges, g_ijs, unit_vectors)
-    num_atoms = partial_charges.shape[0]
-    scalar_features = scalar_features.reshape(num_atoms, -1)
-    vector_features = jnp.einsum("agh,nagd->nahd", vector_weights, vector_features)
-    vector_features = jnp.sum(vector_features**2, axis=-1).reshape(num_atoms, -1)
-    return jnp.concatenate([scalar_features, vector_features], axis=-1)
-
-
-def neural_charge_equilibration(
-    partial_charges: Array, charge_weights: Array, total_charge: Array | float = 0.0,
-) -> Array:
-    weights = charge_weights**2
-    weight_sum = jnp.sum(weights, axis=0, keepdims=True) + 1.0e-6
-    predicted_charge = jnp.sum(partial_charges, axis=0, keepdims=True)
-    return partial_charges + (weights / weight_sum) * (total_charge - predicted_charge)
-
-
 def _short_range_coulomb_dense(
     charges: Array,
     d: Array,
@@ -400,7 +356,245 @@ def _simple_coulomb_all_pairs(
     return jnp.sum(jnp.where(pair_mask, pair_energy, 0.0).astype(jnp.float64))
 
 
-class AIMNet2Model(eqx.Module):
+class AIMNet2Layer(eqx.Module):
+    afv: Array
+    shifts: Array
+    eta: Array
+    conv_a_agh: Array
+    conv_q_agh: Array
+    mlp0: MLP
+    mlp1: MLP
+    mlp2: MLP
+    nfeature: int = eqx.field(static=True)
+    nshifts: int = eqx.field(static=True)
+    ncharge: int = eqx.field(static=True)
+    ncomb_v: int = eqx.field(static=True)
+    mlp_last_linear: tuple[bool, ...] = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        config: dict[str, Any],
+        dtype: Any = jnp.float32,
+        keys: Array,
+    ):
+        self.nfeature = int(config["nfeature"])
+        self.nshifts = int(config["nshifts"])
+        self.ncharge = int(config["ncharge"])
+        self.ncomb_v = int(config["ncomb_v"])
+        self.mlp_last_linear = tuple(bool(x) for x in config["mlp_last_linear"])
+        self.afv = jnp.zeros((64, self.nfeature * self.nshifts), dtype=dtype)
+        self.shifts = jnp.zeros((self.nshifts,), dtype=dtype)
+        self.eta = jnp.zeros((), dtype=dtype)
+        self.conv_a_agh = jnp.zeros(
+            (self.nfeature, self.nshifts, self.ncomb_v),
+            dtype=dtype,
+        )
+        self.conv_q_agh = jnp.zeros(
+            (self.ncharge, self.nshifts, self.ncomb_v),
+            dtype=dtype,
+        )
+        self.mlp0 = MLP(config["mlp0_sizes"], dtype=dtype, key=keys[0])
+        self.mlp1 = MLP(config["mlp1_sizes"], dtype=dtype, key=keys[1])
+        self.mlp2 = MLP(config["mlp2_sizes"], dtype=dtype, key=keys[2])
+
+    def _atomic_embedding_features(
+        self,
+        atomic_embeddings: Array,
+        g_ijs: Array,
+        unit_vectors: Array,
+        neighbors: Array,
+        edge_mask: Array,
+    ) -> Array:
+        neighbor_embeddings = atomic_embeddings[neighbors]
+        neighbor_embeddings = jnp.where(
+            edge_mask[..., None, None],
+            neighbor_embeddings,
+            0.0,
+        )
+        scalar_features = jnp.sum(neighbor_embeddings * g_ijs[:, :, None, :], axis=1)
+        vector_features = jnp.einsum(
+            "nkag,nkg,nkd->nagd",
+            neighbor_embeddings,
+            g_ijs,
+            unit_vectors,
+        )
+        num_atoms = atomic_embeddings.shape[0]
+        scalar_features = scalar_features.reshape(num_atoms, -1)
+        vector_features = jnp.einsum(
+            "agh,nagd->nahd",
+            self.conv_a_agh,
+            vector_features,
+        )
+        vector_features = jnp.sum(vector_features**2, axis=-1).reshape(num_atoms, -1)
+        return jnp.concatenate([scalar_features, vector_features], axis=-1)
+
+    def _charge_features(
+        self,
+        partial_charges: Array,
+        g_ijs: Array,
+        unit_vectors: Array,
+        neighbors: Array,
+        edge_mask: Array,
+    ) -> Array:
+        neighbor_charges = partial_charges[neighbors]
+        neighbor_charges = jnp.where(edge_mask[..., None], neighbor_charges, 0.0)
+        scalar_features = jnp.einsum("nka,nkg->nag", neighbor_charges, g_ijs)
+        vector_features = jnp.einsum(
+            "nka,nkg,nkd->nagd",
+            neighbor_charges,
+            g_ijs,
+            unit_vectors,
+        )
+        num_atoms = partial_charges.shape[0]
+        scalar_features = scalar_features.reshape(num_atoms, -1)
+        vector_features = jnp.einsum(
+            "agh,nagd->nahd",
+            self.conv_q_agh,
+            vector_features,
+        )
+        vector_features = jnp.sum(vector_features**2, axis=-1).reshape(num_atoms, -1)
+        return jnp.concatenate([scalar_features, vector_features], axis=-1)
+
+    def _neural_charge_equilibration(
+        self,
+        partial_charges: Array,
+        charge_weights: Array,
+        total_charge: Array | float = 0.0,
+    ) -> Array:
+        weights = charge_weights**2
+        weight_sum = jnp.sum(weights, axis=0, keepdims=True) + 1.0e-6
+        predicted_charge = jnp.sum(partial_charges, axis=0, keepdims=True)
+        return partial_charges + (weights / weight_sum) * (
+            total_charge - predicted_charge
+        )
+
+    def __call__(
+        self,
+        species,
+        unit_vectors,
+        g_ijs,
+        neighbors,
+        edge_mask,
+        total_charge,
+    ):
+        num_atoms = species.shape[0]
+        nfeature, nshifts, ncharge = self.nfeature, self.nshifts, self.ncharge
+
+        atomic_embeddings = self.afv[species].reshape(num_atoms, nfeature, nshifts)
+        embedding_flat = atomic_embeddings.reshape(num_atoms, -1)
+        out0 = self.mlp0(
+            jnp.concatenate(
+                [
+                    embedding_flat,
+                    self._atomic_embedding_features(
+                        atomic_embeddings,
+                        g_ijs,
+                        unit_vectors,
+                        neighbors,
+                        edge_mask,
+                    ),
+                ],
+                axis=-1,
+            ),
+            last_linear=self.mlp_last_linear[0],
+        )
+        partial_charges = self._neural_charge_equilibration(
+            out0[:, :ncharge],
+            out0[:, ncharge : 2 * ncharge],
+            total_charge,
+        )
+        atomic_embeddings = (embedding_flat + out0[:, 2 * ncharge :]).reshape(
+            num_atoms,
+            nfeature,
+            nshifts,
+        )
+
+        embedding_flat = atomic_embeddings.reshape(num_atoms, -1)
+        out1 = self.mlp1(
+            jnp.concatenate(
+                [
+                    embedding_flat,
+                    self._atomic_embedding_features(
+                        atomic_embeddings,
+                        g_ijs,
+                        unit_vectors,
+                        neighbors,
+                        edge_mask,
+                    ),
+                    partial_charges,
+                    self._charge_features(
+                        partial_charges,
+                        g_ijs,
+                        unit_vectors,
+                        neighbors,
+                        edge_mask,
+                    ),
+                ],
+                axis=-1,
+            ),
+            last_linear=self.mlp_last_linear[1],
+        )
+        partial_charges = self._neural_charge_equilibration(
+            partial_charges + out1[:, :ncharge],
+            out1[:, ncharge : 2 * ncharge],
+            total_charge,
+        )
+        atomic_embeddings = (embedding_flat + out1[:, 2 * ncharge :]).reshape(
+            num_atoms,
+            nfeature,
+            nshifts,
+        )
+
+        embedding_flat = atomic_embeddings.reshape(num_atoms, -1)
+        aim_vectors = self.mlp2(
+            jnp.concatenate(
+                [
+                    embedding_flat,
+                    self._atomic_embedding_features(
+                        atomic_embeddings,
+                        g_ijs,
+                        unit_vectors,
+                        neighbors,
+                        edge_mask,
+                    ),
+                    partial_charges,
+                    self._charge_features(
+                        partial_charges,
+                        g_ijs,
+                        unit_vectors,
+                        neighbors,
+                        edge_mask,
+                    ),
+                ],
+                axis=-1,
+            ),
+            last_linear=self.mlp_last_linear[2],
+        )
+        return aim_vectors, partial_charges
+
+
+class EnergyHead(eqx.Module):
+    energy_mlp: MLP
+    atomic_shifts: Array
+
+    def __init__(
+        self,
+        *,
+        config: dict[str, Any],
+        dtype: Any = jnp.float32,
+        key: Array,
+    ):
+        self.energy_mlp = MLP(config["energy_sizes"], dtype=dtype, key=key)
+        with jax.enable_x64(True):
+            self.atomic_shifts = jnp.zeros((64,), dtype=jnp.float64)
+
+    def __call__(self, aim_vectors: Array, species: Array) -> Array:
+        atom_local_energy = self.energy_mlp(aim_vectors, last_linear=True).squeeze(-1)
+        return atom_local_energy.astype(jnp.float64) + self.atomic_shifts[species]
+
+
+class AIMNet2(eqx.Module):
     bohr_a: float = eqx.field(static=True)
     coulomb_factor: float = eqx.field(static=True)
     cutoff: float = eqx.field(static=True)
@@ -426,16 +620,8 @@ class AIMNet2Model(eqx.Module):
     lr_cutoff: float = eqx.field(static=True)
     d3_smoothing_fraction: float = eqx.field(static=True)
     dsf_alpha: float = eqx.field(static=True)
-    afv: Array
-    shifts: Array
-    eta: Array
-    conv_a_agh: Array
-    conv_q_agh: Array
-    mlp0: MLP
-    mlp1: MLP
-    mlp2: MLP
-    energy_mlp: MLP
-    atomic_shifts: Array
+    layer: AIMNet2Layer
+    energy_head: EnergyHead
     d3_c6ab: Array | None
     d3_rcov: Array | None
     d3_r2r4: Array | None
@@ -476,17 +662,16 @@ class AIMNet2Model(eqx.Module):
         self.lr_cutoff = float(config["lr_cutoff"])
         self.d3_smoothing_fraction = float(config["d3_smoothing_fraction"])
         self.dsf_alpha = float(config["dsf_alpha"])
-        self.afv = jnp.zeros((64, self.nfeature * self.nshifts), dtype=dtype)
-        self.shifts = jnp.zeros((self.nshifts,), dtype=dtype)
-        self.eta = jnp.zeros((), dtype=dtype)
-        self.conv_a_agh = jnp.zeros((self.nfeature, self.nshifts, self.ncomb_v), dtype=dtype)
-        self.conv_q_agh = jnp.zeros((self.ncharge, self.nshifts, self.ncomb_v), dtype=dtype)
-        self.mlp0 = MLP(config["mlp0_sizes"], dtype=dtype, key=keys[0])
-        self.mlp1 = MLP(config["mlp1_sizes"], dtype=dtype, key=keys[1])
-        self.mlp2 = MLP(config["mlp2_sizes"], dtype=dtype, key=keys[2])
-        self.energy_mlp = MLP(config["energy_sizes"], dtype=dtype, key=keys[3])
-        with jax.enable_x64(True):
-            self.atomic_shifts = jnp.zeros((64,), dtype=jnp.float64)
+        self.layer = AIMNet2Layer(
+            config=config,
+            dtype=dtype,
+            keys=keys[:3],
+        )
+        self.energy_head = EnergyHead(
+            config=config,
+            dtype=dtype,
+            key=keys[3],
+        )
         if d3_params is None and config["has_d3_params"]:
             try:
                 c6ab_shape = tuple(int(v) for v in config["d3_c6ab_shape"])
@@ -529,97 +714,6 @@ class AIMNet2Model(eqx.Module):
             "bohr_a": float(self.bohr_a),
             "hartree_ev": float(self.hartree_ev),
         }
-
-    def message_passing(
-        self,
-        species,
-        unit_vectors,
-        g_ijs,
-        neighbors,
-        edge_mask,
-        total_charge,
-    ):
-        num_atoms = species.shape[0]
-        nfeature, nshifts, ncharge = self.nfeature, self.nshifts, self.ncharge
-
-        def embedding_features(atomic_embeddings):
-            return atomic_embedding_features(
-                atomic_embeddings,
-                g_ijs,
-                unit_vectors,
-                self.conv_a_agh,
-                neighbors,
-                edge_mask,
-            )
-
-        def partial_charge_features(partial_charges):
-            return charge_features(
-                partial_charges,
-                g_ijs,
-                unit_vectors,
-                self.conv_q_agh,
-                neighbors,
-                edge_mask,
-            )
-
-        atomic_embeddings = self.afv[species].reshape(num_atoms, nfeature, nshifts)
-        embedding_flat = atomic_embeddings.reshape(num_atoms, -1)
-        out0 = self.mlp0(
-            jnp.concatenate(
-                [embedding_flat, embedding_features(atomic_embeddings)],
-                axis=-1,
-            ),
-            last_linear=self.mlp_last_linear[0],
-        )
-        partial_charges = neural_charge_equilibration(
-            out0[:, :ncharge],
-            out0[:, ncharge : 2 * ncharge],
-            total_charge,
-        )
-        atomic_embeddings = (embedding_flat + out0[:, 2 * ncharge :]).reshape(
-            num_atoms,
-            nfeature,
-            nshifts,
-        )
-
-        embedding_flat = atomic_embeddings.reshape(num_atoms, -1)
-        out1 = self.mlp1(
-            jnp.concatenate(
-                [
-                    embedding_flat,
-                    embedding_features(atomic_embeddings),
-                    partial_charges,
-                    partial_charge_features(partial_charges),
-                ],
-                axis=-1,
-            ),
-            last_linear=self.mlp_last_linear[1],
-        )
-        partial_charges = neural_charge_equilibration(
-            partial_charges + out1[:, :ncharge],
-            out1[:, ncharge : 2 * ncharge],
-            total_charge,
-        )
-        atomic_embeddings = (embedding_flat + out1[:, 2 * ncharge :]).reshape(
-            num_atoms,
-            nfeature,
-            nshifts,
-        )
-
-        embedding_flat = atomic_embeddings.reshape(num_atoms, -1)
-        aim_vectors = self.mlp2(
-            jnp.concatenate(
-                [
-                    embedding_flat,
-                    embedding_features(atomic_embeddings),
-                    partial_charges,
-                    partial_charge_features(partial_charges),
-                ],
-                axis=-1,
-            ),
-            last_linear=self.mlp_last_linear[2],
-        )
-        return aim_vectors, partial_charges
 
     def coulomb_energy(
         self,
@@ -679,9 +773,14 @@ class AIMNet2Model(eqx.Module):
         )
         r_ij = safe_norm(local_vectors, axis=-1)
         unit_vectors = local_vectors / jnp.maximum(r_ij[..., None], 1.0e-8)
-        g_ijs = radial_symmetry_functions(r_ij, self.shifts, self.eta, self.cutoff)
+        g_ijs = radial_symmetry_functions(
+            r_ij,
+            self.layer.shifts,
+            self.layer.eta,
+            self.cutoff,
+        )
         g_ijs = jnp.where(edge_mask[..., None], g_ijs, 0.0)
-        aim_vectors, partial_charges = self.message_passing(
+        aim_vectors, partial_charges = self.layer(
             species,
             unit_vectors,
             g_ijs,
@@ -690,8 +789,7 @@ class AIMNet2Model(eqx.Module):
             total_charge,
         )
 
-        atom_local_energy = self.energy_mlp(aim_vectors, last_linear=True).squeeze(-1)
-        node_energies = atom_local_energy.astype(jnp.float64) + self.atomic_shifts[species]
+        node_energies = self.energy_head(aim_vectors, species)
         return node_energies, partial_charges, r_ij, neighbors, edge_mask
 
     def __call__(
@@ -778,7 +876,7 @@ def load_aimnet2_model(
     model_path: str | PathLike | None = None,
     neighbor_cell_atom_threshold: int | None = None,
     neighbor_cell_capacity_multiplier: float | None = None,
-) -> AIMNet2Model:
+) -> AIMNet2:
     if model_path is not None:
         path = Path(model_path)
     elif isinstance(model, PathLike):
@@ -787,8 +885,6 @@ def load_aimnet2_model(
         path = AIMNET2_MODEL_PATHS[model]
     else:
         path = Path(model)
-    if not path.is_file():
-        raise FileNotFoundError(f"AIMNet2 .eqx checkpoint not found: {path}")
     with path.open("rb") as handle:
         config = dict(json.loads(handle.readline().decode()))
         if neighbor_cell_atom_threshold is not None:
@@ -798,5 +894,5 @@ def load_aimnet2_model(
                 neighbor_cell_capacity_multiplier
             )
         with jax.enable_x64(True):
-            template = AIMNet2Model(config=config, dtype=jnp.float32)
+            template = AIMNet2(config=config, dtype=jnp.float32)
             return eqx.tree_deserialise_leaves(handle, template)

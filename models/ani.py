@@ -495,8 +495,6 @@ def load_ani2x_model(
         path = ANI2X_MODEL_PATHS[model]
     else:
         path = Path(model)
-    if not path.is_file():
-        raise FileNotFoundError(f"ANI2x .eqx checkpoint not found: {path}")
 
     with path.open("rb") as handle:
         config = json.loads(handle.readline().decode())
