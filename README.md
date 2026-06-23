@@ -14,6 +14,12 @@ cmake --build build --target install --parallel
 cmake --build build --target PythonInstall
 ```
 
+Test suite is borrowed from [openmm-ml](https://github.com/openmm/openmm-ml/tree/main/test)
+
+```bash
+pytest test
+```
+
 ## Supported Models
 
 Currently supporting inference only. Except FeNNiX all other models are implemented from scratch with no external dependencies.
