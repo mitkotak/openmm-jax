@@ -18,6 +18,12 @@ DATA_DIR = Path(__file__).resolve().parent
 EV_TO_KJMOL = (unit.elementary_charge * unit.volt * unit.AVOGADRO_CONSTANT_NA).value_in_unit(
     unit.kilojoules_per_mole
 )
+SYSTEMS = {
+    "toluene": DATA_DIR / "toluene" / "toluene.pdb",
+    "alanine-dipeptide-explicit": DATA_DIR
+    / "alanine-dipeptide"
+    / "alanine-dipeptide-explicit.pdb",
+}
 MODEL = "orb-v3-conservative-omol"
 
 
@@ -29,24 +35,38 @@ def make_calculator():
     return ORBCalculator(pretrained)
 
 
-results = {}
+def calculate_energy(path: Path, charge: int, spin: int) -> float:
+    atoms = ase.io.read(path)
+    atoms.info["charge"] = charge
+    atoms.info["spin"] = spin
+    atoms.calc = make_calculator()
+    return atoms.get_potential_energy() * EV_TO_KJMOL
 
-atoms = ase.io.read(DATA_DIR / "toluene" / "toluene.pdb")
-atoms.info["charge"] = 0
-atoms.info["spin"] = 1
-atoms.calc = make_calculator()
-results[f"toluene/{MODEL}"] = atoms.get_potential_energy()
 
-atoms.info["charge"] = -1
-atoms.info["spin"] = 3
-atoms.calc = make_calculator()
-results[f"toluene/{MODEL}/override-charge-spin"] = atoms.get_potential_energy()
+def calculate_results() -> dict[str, float]:
+    results = {}
+    results[f"toluene/{MODEL}"] = calculate_energy(SYSTEMS["toluene"], charge=0, spin=1)
+    results[f"toluene/{MODEL}/override-charge-spin"] = calculate_energy(
+        SYSTEMS["toluene"],
+        charge=-1,
+        spin=3,
+    )
+    results[f"alanine-dipeptide-explicit/{MODEL}"] = calculate_energy(
+        SYSTEMS["alanine-dipeptide-explicit"],
+        charge=0,
+        spin=1,
+    )
+    return results
 
-atoms = ase.io.read(DATA_DIR / "alanine-dipeptide" / "alanine-dipeptide-explicit.pdb")
-atoms.info["charge"] = 0
-atoms.info["spin"] = 1
-atoms.calc = make_calculator()
-results[f"alanine-dipeptide-explicit/{MODEL}"] = atoms.get_potential_energy()
 
-for key in results:
-    print(f"{key}: {results[key] * EV_TO_KJMOL}")
+def print_results(results: dict[str, float]) -> None:
+    for key, value in results.items():
+        print(f"{key}: {value!r}")
+
+
+def main() -> None:
+    print_results(calculate_results())
+
+
+if __name__ == "__main__":
+    main()
