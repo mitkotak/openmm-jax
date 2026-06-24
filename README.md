@@ -47,7 +47,9 @@ Currently supporting inference only. Except FeNNiX all other models are implemen
 
 https://github.com/openmm/openmm/issues/4594 for the idea
 
-@abhijeetgangan for discussions on API design, [openmm-torch](https://github.com/openmm/openmm-torch)/[opemmm-ml](https://github.com/openmm/openmm-ml)/[openmm](https://github.com/openmm/openmm) for MD code and [xla](https://github.com/openxla/xla/tree/main) for PJRT code, [https://www.youtube.com/watch?v=2GlMqaNxP_w] for intro to PJRT concepts, [FeNNol](https://github.com/FeNNol-tools/FeNNol) for their ANI implementation. Benchmarking infrastructure from https://github.com/openmm/openmm-ml/tree/main/test
+@abhijeetgangan for discussions on API design, [openmm-torch](https://github.com/openmm/openmm-torch)/[opemmm-ml](https://github.com/openmm/openmm-ml)/[openmm](https://github.com/openmm/openmm) for MD code and [xla](https://github.com/openxla/xla/tree/main) for PJRT code, [https://www.youtube.com/watch?v=2GlMqaNxP_w] for intro to PJRT concepts, [FeNNol](https://github.com/FeNNol-tools/FeNNol) for their ANI implementation. Benchmarking infrastructure from https://github.com/openmm/openmm-ml/tree/main/test. [@teddykoker](https://github.com/atomicarchitects/nequix/blob/main/nequix/model.py) for the from scratch mindset.
+
+Also show some love to our friends at [lammps-jax](https://github.com/abhijeetgangan/lammps-jax).
 
 ## License
 
