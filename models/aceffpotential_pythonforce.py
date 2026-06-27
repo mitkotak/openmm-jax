@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import partial
 from typing import Iterable, Optional
 
 import jax
@@ -21,36 +22,16 @@ jax.config.update("jax_default_matmul_precision", "highest")
 
 
 class AceFFPythonForcePotentialImplFactory(MLPotentialImplFactory):
-    def createImpl(
-        self,
-        name,
-        modelPath=None,
-        charge: float = 0.0,
-        total_charge: Optional[float] = None,
-        **args,
-    ):
+    def createImpl(self, name, modelPath=None, **args):
         if name.endswith("-python"):
             name = name[: -len("-python")]
-        return AceFFPythonForcePotentialImpl(
-            name,
-            modelPath=modelPath,
-            charge=charge,
-            total_charge=total_charge,
-        )
+        return AceFFPythonForcePotentialImpl(name, modelPath=modelPath)
 
 
 class AceFFPythonForcePotentialImpl(MLPotentialImpl):
-    def __init__(
-        self,
-        name,
-        modelPath=None,
-        charge: float = 0.0,
-        total_charge: Optional[float] = None,
-    ):
+    def __init__(self, name, modelPath=None):
         self.name = name
         self.modelPath = modelPath
-        self.charge = charge
-        self.total_charge = total_charge
 
     def addForces(
         self,
@@ -59,7 +40,7 @@ class AceFFPythonForcePotentialImpl(MLPotentialImpl):
         atoms: Optional[Iterable[int]],
         forceGroup: int,
         modelPath: Optional[str] = None,
-        charge: Optional[float] = None,
+        charge: float = 0.0,
         total_charge: Optional[float] = None,
         neighbor_cell_atom_threshold: Optional[int] = None,
         neighbor_cell_capacity_multiplier: Optional[float] = None,
@@ -78,11 +59,12 @@ class AceFFPythonForcePotentialImpl(MLPotentialImpl):
         )
         indices = None if atoms is None else np.asarray(atoms, dtype=np.int32)
 
-        model_ref = self.modelPath if modelPath is None else modelPath
+        model_ref = modelPath if modelPath is not None else self.modelPath
         if model_ref is None:
-            if self.name not in ACEFF_MODEL_NAMES:
+            if self.name in ACEFF_MODEL_NAMES:
+                model_ref = self.name
+            else:
                 raise ValueError("modelPath must be provided for custom AceFF PythonForce models")
-            model_ref = self.name
         model = load_aceff_model(
             model_ref,
             neighbor_cell_atom_threshold=neighbor_cell_atom_threshold,
@@ -120,11 +102,7 @@ class AceFFPythonForcePotentialImpl(MLPotentialImpl):
             cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
             periodic=use_periodic_neighbors,
         )
-        model_charge = self.charge if charge is None else charge
-        if total_charge is not None:
-            model_charge = total_charge
-        elif self.total_charge is not None:
-            model_charge = self.total_charge
+        model_charge = charge if total_charge is None else total_charge
 
         force = openmm.PythonForce(
             _ComputeAceFFPythonForce(
@@ -199,18 +177,18 @@ def _restricted_box_inverse(box):
 
 
 def _energyAceFF(
-    positions_nm,
-    box_vectors_nm,
+    state,
     model,
     species,
     total_charge,
+    pbc: bool,
     neighbor_list,
-    periodic: bool,
 ):
     """Evaluate AceFF energy in kJ/mol from OpenMM positions in nm."""
+    positions_nm, box_vectors_nm = state
     positions = positions_nm * unit.nanometer.conversion_factor_to(unit.angstrom)
     box_vectors = None
-    if periodic:
+    if pbc and box_vectors_nm is not None:
         box_vectors = box_vectors_nm * unit.nanometer.conversion_factor_to(unit.angstrom)
         positions = fractional_coordinates(positions, box_vectors)
         positions = positions - jnp.floor(positions)
@@ -219,7 +197,7 @@ def _energyAceFF(
         species,
         box_vectors=box_vectors,
         neighbors=neighbor_list,
-        periodic=periodic,
+        periodic=pbc,
         total_charge=total_charge,
     )
     return energy * model.ev_to_kjmol
@@ -245,21 +223,21 @@ class _ComputeAceFFPythonForce:
         self.jax_indices = (
             None if self.indices is None else jnp.asarray(self.indices, dtype=jnp.int32)
         )
+        self.energy_fn = partial(
+            _energyAceFF,
+            model=model,
+            species=species,
+            total_charge=total_charge,
+            pbc=self.periodic,
+            neighbor_list=neighbor_list,
+        )
         self._energy_and_grad = None
 
     def _energy_kjmol(self, positions_nm, box_vectors_nm=None):
         selected_positions = (
             positions_nm if self.jax_indices is None else positions_nm[self.jax_indices]
         )
-        return _energyAceFF(
-            selected_positions,
-            box_vectors_nm,
-            model=self.model,
-            species=self.species,
-            total_charge=self.total_charge,
-            neighbor_list=self.neighbor_list,
-            periodic=self.periodic,
-        )
+        return self.energy_fn((selected_positions, box_vectors_nm))
 
     def _compiled_energy_and_grad(self):
         if self._energy_and_grad is None:
@@ -277,9 +255,9 @@ class _ComputeAceFFPythonForce:
                 state.getPeriodicBoxVectors(asNumpy=True).value_in_unit(unit.nanometer),
                 dtype=jnp.float32,
             )
-        energy, energy_grad = self._compiled_energy_and_grad()(
+        energy, minus_forces = self._compiled_energy_and_grad()(
             positions_nm,
             box_vectors_nm,
         )
-        forces = -energy_grad
+        forces = -minus_forces
         return float(jax.device_get(energy)), np.asarray(jax.device_get(forces))
