@@ -19,7 +19,7 @@ from openmmml.mlpotential import MLPotential, MLPotentialImpl, MLPotentialImplFa
 from .aceff import (
     ACEFF_MODEL_NAMES,
     get_neighbors,
-    load_aceff_model,
+    load_model,
 )
 
 jax.config.update("jax_default_matmul_precision", "highest")
@@ -61,7 +61,7 @@ class AceFFPotentialImpl(MLPotentialImpl):
                 model_ref = self.name
             else:
                 raise ValueError("modelPath must be provided for custom AceFF models")
-        model = load_aceff_model(
+        model = load_model(
             model_ref,
             neighbor_cell_atom_threshold=neighbor_cell_atom_threshold,
             neighbor_cell_capacity_multiplier=neighbor_cell_capacity_multiplier,

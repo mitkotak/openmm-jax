@@ -20,7 +20,7 @@ from openmmml.mlpotential import MLPotential, MLPotentialImpl, MLPotentialImplFa
 from .aimnet2 import (
     AIMNET2_MODEL_NAMES,
     get_neighbors,
-    load_aimnet2_model,
+    load_model,
 )
 
 
@@ -92,7 +92,7 @@ class AIMNet2PotentialImpl(MLPotentialImpl):
                 model_ref = self.name
             else:
                 raise ValueError("modelPath must be provided for custom AIMNet2 models")
-        model = load_aimnet2_model(
+        model = load_model(
             model_ref,
             neighbor_cell_atom_threshold=neighbor_cell_atom_threshold,
             neighbor_cell_capacity_multiplier=neighbor_cell_capacity_multiplier,

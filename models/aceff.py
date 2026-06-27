@@ -834,7 +834,7 @@ class AceFF(eqx.Module):
         total_energy = local_energy + coulomb_energy
         return total_energy
 
-def load_aceff_model(
+def load_model(
     model: str | PathLike = "aceff-jax-2.0",
     *,
     model_path: str | PathLike | None = None,

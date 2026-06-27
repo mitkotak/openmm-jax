@@ -15,7 +15,7 @@ from .ani import (
     ANI2X_MODEL_NAMES,
     HARTREE_TO_KJMOL,
     get_neighbors,
-    load_ani2x_model,
+    load_model,
 )
 
 
@@ -60,7 +60,7 @@ class ANI2xPythonForcePotentialImpl(MLPotentialImpl):
                 model_ref = self.name
             else:
                 raise ValueError("modelPath must be provided for custom ANI2x PythonForce models")
-        model = load_ani2x_model(
+        model = load_model(
             model_ref,
             atomic_numbers=species,
             neighbor_cell_atom_threshold=neighbor_cell_atom_threshold,

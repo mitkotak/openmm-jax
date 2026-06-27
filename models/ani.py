@@ -470,7 +470,7 @@ class ANI2x(eqx.Module):
         local_energy = jnp.sum(node_energies)
         return local_energy
 
-def load_ani2x_model(
+def load_model(
     model: str | PathLike = "ani2x-jax-ensemble",
     *,
     atomic_numbers=None,

@@ -865,7 +865,7 @@ class AIMNet2(eqx.Module):
             total_energy = local_energy + coulomb_energy + dispersion_energy
             return total_energy.astype(jnp.float32)
 
-def load_aimnet2_model(
+def load_model(
     model: str | PathLike = "aimnet2-jax",
     *,
     model_path: str | PathLike | None = None,

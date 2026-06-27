@@ -660,7 +660,7 @@ class Orb(eqx.Module):
         return total_energy
 
 
-def load_orb_model(
+def load_model(
     model: str | PathLike = "orb-jax-v3-conservative-omol",
     *,
     model_path: str | PathLike | None = None,

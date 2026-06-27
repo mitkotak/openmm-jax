@@ -20,7 +20,7 @@ from .ani import (
     ANI2X_MODEL_NAMES,
     HARTREE_TO_KJMOL,
     get_neighbors,
-    load_ani2x_model,
+    load_model,
 )
 
 
@@ -61,7 +61,7 @@ class ANI2xPotentialImpl(MLPotentialImpl):
             else:
                 raise ValueError("modelPath must be provided for custom ANI2x models")
         atomic_numbers = [atom.element.atomic_number for atom in includedAtoms]
-        model = load_ani2x_model(
+        model = load_model(
             model_ref,
             atomic_numbers=jnp.asarray(atomic_numbers, dtype=jnp.int32),
             neighbor_cell_atom_threshold=neighbor_cell_atom_threshold,

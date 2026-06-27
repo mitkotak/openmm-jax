@@ -14,7 +14,7 @@ from openmmml.mlpotential import MLPotential, MLPotentialImpl, MLPotentialImplFa
 from .orb import (
     ORB_MODEL_NAMES,
     get_neighbors,
-    load_orb_model,
+    load_model,
 )
 
 jax.config.update("jax_default_matmul_precision", "highest")
@@ -86,7 +86,7 @@ class OrbPythonForcePotentialImpl(MLPotentialImpl):
             if self.name not in ORB_MODEL_NAMES:
                 raise ValueError("modelPath must be provided for custom ORB PythonForce models")
             model_ref = self.name
-        model = load_orb_model(
+        model = load_model(
             model_ref,
             neighbor_cell_atom_threshold=neighbor_cell_atom_threshold,
             neighbor_cell_capacity_multiplier=neighbor_cell_capacity_multiplier,

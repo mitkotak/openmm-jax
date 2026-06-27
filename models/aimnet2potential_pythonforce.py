@@ -14,7 +14,7 @@ from openmmml.mlpotential import MLPotential, MLPotentialImpl, MLPotentialImplFa
 from .aimnet2 import (
     AIMNET2_MODEL_NAMES,
     get_neighbors,
-    load_aimnet2_model,
+    load_model,
 )
 
 
@@ -91,13 +91,13 @@ class AIMNet2PythonForcePotentialImpl(MLPotentialImpl):
                 raise ValueError(
                     "modelPath must be provided for custom AIMNet2 PythonForce models"
                 )
-            model = load_aimnet2_model(
+            model = load_model(
                 self.name,
                 neighbor_cell_atom_threshold=neighbor_cell_atom_threshold,
                 neighbor_cell_capacity_multiplier=neighbor_cell_capacity_multiplier,
             )
         else:
-            model = load_aimnet2_model(
+            model = load_model(
                 self.name,
                 model_path=model_ref,
                 neighbor_cell_atom_threshold=neighbor_cell_atom_threshold,
