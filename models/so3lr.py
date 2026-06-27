@@ -304,7 +304,7 @@ class ChargeSpinEmbed(eqx.Module):
         psi: Array,
     ) -> Array:
         q = self.embed_0[atomic_numbers]
-        psi_bucket = jnp.asarray(0, dtype=jnp.int32)
+        psi_bucket = (psi < 0.0).astype(jnp.int32)
         k = self.embed_1[psi_bucket]
         v = self.embed_2[psi_bucket]
         q_x_k = (q * k).sum(axis=-1) / jnp.sqrt(float(q.shape[-1]))
@@ -382,17 +382,16 @@ class AttentionBlock(eqx.Module):
         w2_ij = w2_ij + self.spherical_filter2(contracted)
         w1_ij = w1_ij.reshape(*w1_ij.shape[:-1], 4, -1)
         w2_ij = w2_ij.reshape(*w2_ij.shape[:-1], 4, -1)
-        x1_h = x.reshape(*x.shape[:-1], 4, -1)
-        x2_h = x.reshape(*x.shape[:-1], 4, -1)
+        x_h = x.reshape(*x.shape[:-1], 4, -1)
 
-        q1_i = jnp.einsum("Hij,NHj->NHi", self.wq1, x1_h)[idx_i]
-        k1_j = jnp.einsum("Hij,NHj->NHi", self.wk1, x1_h)[idx_j]
-        q2_i = jnp.einsum("Hij,NHj->NHi", self.wq2, x2_h)[idx_i]
-        k2_j = jnp.einsum("Hij,NHj->NHi", self.wk2, x2_h)[idx_j]
+        q1_i = jnp.einsum("Hij,NHj->NHi", self.wq1, x_h)[idx_i]
+        k1_j = jnp.einsum("Hij,NHj->NHi", self.wk1, x_h)[idx_j]
+        q2_i = jnp.einsum("Hij,NHj->NHi", self.wq2, x_h)[idx_i]
+        k2_j = jnp.einsum("Hij,NHj->NHi", self.wk2, x_h)[idx_j]
         nc = jnp.asarray(avg_num_neighbors, dtype=x.dtype)
         alpha1_ij = safe_scale((q1_i * w1_ij * k1_j).sum(axis=-1) / nc, cut[:, None])
         alpha2_ij = safe_scale((q2_i * w2_ij * k2_j).sum(axis=-1) / nc, cut[:, None])
-        v_j = jnp.einsum("hij,Nhj->Nhi", self.wv1, x1_h)[idx_j]
+        v_j = jnp.einsum("hij,Nhj->Nhi", self.wv1, x_h)[idx_j]
         x_att = segment_sum(alpha1_ij[:, :, None] * v_j, idx_i, num_segments=x.shape[0])
         x_att = x_att.reshape(*x.shape[:-1], -1)
         ev_att = segment_sum(
@@ -651,16 +650,12 @@ class EnergyHead(eqx.Module):
         fine_structure: float,
         dispersion_alphas: Array,
         dispersion_c6: Array,
-    ) -> tuple[Array, dict[str, Array]]:
-        atomic_energy = self.local_node_energies(
+    ) -> Array:
+        nn_energy = self.local_node_energies(
             x=x,
             atomic_numbers=atomic_numbers,
         )
-        nn_energy = atomic_energy
-
         zbl = self.zbl_repulsion(atomic_numbers, cut, idx_i, idx_j, d_ij)
-        atomic_energy = atomic_energy + zbl
-
         partial_charges = self.partial_charges(
             x,
             atomic_numbers,
@@ -674,8 +669,6 @@ class EnergyHead(eqx.Module):
             cutoff_lr=cutoff_lr,
             sigma=electrostatic_energy_scale,
         )
-        atomic_energy = atomic_energy + electrostatic
-
         hirshfeld = self.hirshfeld_ratios(x, atomic_numbers)
         dispersion = dispersion_energy(
             atomic_numbers,
@@ -690,15 +683,7 @@ class EnergyHead(eqx.Module):
             dispersion_alphas=dispersion_alphas,
             dispersion_c6=dispersion_c6,
         )
-        atomic_energy = atomic_energy + dispersion
-        return atomic_energy, {
-            "nn_energy": nn_energy,
-            "zbl_repulsion": zbl,
-            "partial_charges": partial_charges,
-            "electrostatic_energy": electrostatic,
-            "hirshfeld_ratios": hirshfeld,
-            "dispersion_energy": dispersion,
-        }
+        return nn_energy + zbl + electrostatic + dispersion
 
 
 def electrostatic_energy(
@@ -1006,7 +991,7 @@ class SO3LR(eqx.Module):
                 avg_num_neighbors=self.avg_num_neighbors,
             )
 
-        atomic_energy, _ = self.energy_head(
+        atomic_energy = self.energy_head(
             x=x,
             atomic_numbers=atomic_numbers,
             idx_i=idx_i,
