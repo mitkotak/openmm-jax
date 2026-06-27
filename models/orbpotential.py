@@ -171,7 +171,7 @@ class OrbPotentialImpl(MLPotentialImpl):
             return energy, -minus_forces
 
         def _forces_kjmol(positions_nm, box_vectors_nm=None):
-            return _energy_and_forces_kjmol(positions_nm, box_vectors_nm)[1]
+            return -jax.grad(_energy_kjmol)(positions_nm, box_vectors_nm)
 
         force_mlir, energy_mlir, energy_and_forces_mlir, compile_options_base64 = export_jax_model(
             num_system_atoms=numSystemAtoms,

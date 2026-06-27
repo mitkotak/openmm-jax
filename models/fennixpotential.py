@@ -221,7 +221,11 @@ class FeNNixPotentialImpl(MLPotentialImpl):
                 return energy, forces
 
             def _forces_kjmol(positions_nm, box_vectors_nm=None):
-                return _energy_and_forces_kjmol(positions_nm, box_vectors_nm)[1]
+                selected_positions = positions_nm if indices is None else positions_nm[indices]
+                _, forces = energy_and_forces_fn((selected_positions, box_vectors_nm))
+                if indices is not None:
+                    forces = jnp.zeros_like(positions_nm).at[indices].set(forces)
+                return forces
 
             force_mlir, energy_mlir, energy_and_forces_mlir, compile_options_base64 = export_jax_model(
                 num_system_atoms=numSystemAtoms,
