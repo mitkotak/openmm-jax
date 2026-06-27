@@ -29,6 +29,8 @@ class AceFFPythonForcePotentialImplFactory(MLPotentialImplFactory):
         total_charge: Optional[float] = None,
         **args,
     ):
+        if name.endswith("-python"):
+            name = name[: -len("-python")]
         return AceFFPythonForcePotentialImpl(
             name,
             modelPath=modelPath,
@@ -78,7 +80,9 @@ class AceFFPythonForcePotentialImpl(MLPotentialImpl):
 
         model_ref = self.modelPath if modelPath is None else modelPath
         if model_ref is None:
-            model_ref = _builtin_model_name(self.name)
+            if self.name not in ACEFF_MODEL_NAMES:
+                raise ValueError("modelPath must be provided for custom AceFF PythonForce models")
+            model_ref = self.name
         model = load_aceff_model(
             model_ref,
             neighbor_cell_atom_threshold=neighbor_cell_atom_threshold,
@@ -89,19 +93,28 @@ class AceFFPythonForcePotentialImpl(MLPotentialImpl):
             topology.getPeriodicBoxVectors() is not None or system.usesPeriodicBoundaryConditions()
         )
         use_periodic_neighbors = periodic and periodic_neighborlist
-        allocation_box = _initial_box_vectors_angstrom(
-            topology,
-            system,
-            use_periodic_neighbors,
-        )
-        allocation_positions = preprocessing_allocation_positions(
-            preprocessing_positions,
-            atoms,
-            preprocessing_positions_unit,
-        )
+        allocation_box = None
+        if use_periodic_neighbors:
+            box_vectors = topology.getPeriodicBoxVectors()
+            if box_vectors is None:
+                box_vectors = system.getDefaultPeriodicBoxVectors()
+            allocation_box = jnp.asarray(
+                [vector.value_in_unit(unit.angstrom) for vector in box_vectors],
+                dtype=jnp.float32,
+            )
+        if preprocessing_positions is None:
+            raise ValueError("AceFF PythonForce requires preprocessing_positions.")
+        if hasattr(preprocessing_positions, "value_in_unit"):
+            allocation_positions = preprocessing_positions.value_in_unit(unit.angstrom)
+        else:
+            scale = preprocessing_positions_unit.conversion_factor_to(unit.angstrom)
+            allocation_positions = jnp.asarray(preprocessing_positions, dtype=jnp.float32) * scale
+        allocation_positions = jnp.asarray(allocation_positions, dtype=jnp.float32)
+        if atoms is not None:
+            allocation_positions = allocation_positions[jnp.asarray(atoms, dtype=jnp.int32)]
         neighbor_list = allocate_neighbor_list(
             allocation_box,
-            allocation_positions=allocation_positions,
+            allocation_positions,
             cell_atom_threshold=int(model.neighbor_cell_atom_threshold),
             cutoff=float(model.cutoff),
             cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
@@ -140,52 +153,25 @@ __all__ = [
 ]
 
 
-def _builtin_model_name(name: str):
-    if name in ACEFF_MODEL_NAMES:
-        return name
-    for suffix in ("-python",):
-        if name.endswith(suffix):
-            model_name = name[: -len(suffix)]
-            if model_name in ACEFF_MODEL_NAMES:
-                return model_name
-    raise ValueError("modelPath must be provided for custom AceFF PythonForce models")
-
-
-def _initial_box_vectors_angstrom(topology, system, periodic: bool):
-    if not periodic:
-        return None
-    box_vectors = topology.getPeriodicBoxVectors()
-    if box_vectors is None:
-        box_vectors = system.getDefaultPeriodicBoxVectors()
-    return jnp.asarray(
-        [vector.value_in_unit(unit.angstrom) for vector in box_vectors],
-        dtype=jnp.float32,
-    )
-
-
 def allocate_neighbor_list(
     box_vectors_angstrom,
+    positions_angstrom,
     *,
-    allocation_positions=None,
     cell_atom_threshold: int,
     cutoff: float,
     cell_capacity_multiplier: float,
     periodic: bool,
 ):
-    positions = allocation_positions
-    if positions is None:
-        raise ValueError("AceFF PythonForce requires preprocessing_positions.")
     if periodic:
         if box_vectors_angstrom is None:
             raise ValueError("periodic neighbor-list allocation requires a box.")
-        positions = fractional_coordinates(positions, box_vectors_angstrom)
+        positions_angstrom = fractional_coordinates(positions_angstrom, box_vectors_angstrom)
     return get_neighbors(
-        positions,
+        positions_angstrom,
         box_vectors_angstrom,
         cutoff=float(cutoff),
         cell_atom_threshold=int(cell_atom_threshold),
         cell_capacity_multiplier=float(cell_capacity_multiplier),
-        extra_capacity=16,
         periodic=periodic,
     )
 
@@ -196,7 +182,6 @@ def fractional_coordinates(positions, box_vectors):
 
 
 def _restricted_box_inverse(box):
-    """Invert OpenMM's restricted upper-triangular box without a solver op."""
     a = box[0, 0]
     b = box[0, 1]
     c = box[0, 2]
@@ -211,24 +196,6 @@ def _restricted_box_inverse(box):
         ],
         dtype=box.dtype,
     )
-
-
-def preprocessing_allocation_positions(
-    preprocessing_positions,
-    atoms,
-    preprocessing_positions_unit,
-):
-    if preprocessing_positions is None:
-        raise ValueError("AceFF PythonForce requires preprocessing_positions.")
-    if hasattr(preprocessing_positions, "value_in_unit"):
-        positions = preprocessing_positions.value_in_unit(unit.angstrom)
-    else:
-        scale = preprocessing_positions_unit.conversion_factor_to(unit.angstrom)
-        positions = jnp.asarray(preprocessing_positions, dtype=jnp.float32) * scale
-    positions = jnp.asarray(positions, dtype=jnp.float32)
-    if atoms is not None:
-        positions = positions[jnp.asarray(atoms, dtype=jnp.int32)]
-    return positions
 
 
 def _energyAceFF(
@@ -247,18 +214,15 @@ def _energyAceFF(
         box_vectors = box_vectors_nm * unit.nanometer.conversion_factor_to(unit.angstrom)
         positions = fractional_coordinates(positions, box_vectors)
         positions = positions - jnp.floor(positions)
-    return (
-        model(
-            positions,
-            species,
-            box_vectors=box_vectors,
-            neighbors=neighbor_list,
-            periodic=periodic,
-            total_charge=total_charge,
-            extra_capacity=16,
-        )
-        * model.ev_to_kjmol
+    energy = model(
+        positions,
+        species,
+        box_vectors=box_vectors,
+        neighbors=neighbor_list,
+        periodic=periodic,
+        total_charge=total_charge,
     )
+    return energy * model.ev_to_kjmol
 
 
 class _ComputeAceFFPythonForce:
@@ -313,6 +277,9 @@ class _ComputeAceFFPythonForce:
                 state.getPeriodicBoxVectors(asNumpy=True).value_in_unit(unit.nanometer),
                 dtype=jnp.float32,
             )
-        energy, energy_grad = self._compiled_energy_and_grad()(positions_nm, box_vectors_nm)
+        energy, energy_grad = self._compiled_energy_and_grad()(
+            positions_nm,
+            box_vectors_nm,
+        )
         forces = -energy_grad
         return float(jax.device_get(energy)), np.asarray(jax.device_get(forces))

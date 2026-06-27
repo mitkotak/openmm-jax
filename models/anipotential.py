@@ -93,26 +93,39 @@ class ANI2xPotentialImpl(MLPotentialImpl):
                 [vector.value_in_unit(unit.angstrom) for vector in box_vectors],
                 dtype=jnp.float32,
             )
-        allocation_positions = preprocessing_allocation_positions(
-            preprocessing_positions,
-            atoms,
-            preprocessing_positions_unit,
-        )
-        radial_neighbor_list = allocate_neighbor_list(
+        if preprocessing_positions is None:
+            raise ValueError("ANI2x JAX requires preprocessing_positions.")
+        if hasattr(preprocessing_positions, "value_in_unit"):
+            allocation_positions = preprocessing_positions.value_in_unit(unit.angstrom)
+        else:
+            scale = preprocessing_positions_unit.conversion_factor_to(unit.angstrom)
+            allocation_positions = jnp.asarray(preprocessing_positions, dtype=jnp.float32) * scale
+        allocation_positions = jnp.asarray(allocation_positions, dtype=jnp.float32)
+        if atoms is not None:
+            allocation_positions = allocation_positions[jnp.asarray(atoms, dtype=jnp.int32)]
+
+        def _allocate_neighbor_lists(box_vectors_angstrom, positions_angstrom):
+            radial_neighbor_list = allocate_neighbor_list(
+                box_vectors_angstrom,
+                positions_angstrom,
+                cell_atom_threshold=neighbor_cell_atom_threshold,
+                cutoff=float(model.radial_cutoff),
+                cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
+                periodic=forcePeriodic,
+            )
+            angular_neighbor_list = allocate_neighbor_list(
+                box_vectors_angstrom,
+                positions_angstrom,
+                cell_atom_threshold=neighbor_cell_atom_threshold,
+                cutoff=float(model.angular_cutoff),
+                cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
+                periodic=forcePeriodic,
+            )
+            return radial_neighbor_list, angular_neighbor_list
+
+        radial_neighbor_list, angular_neighbor_list = _allocate_neighbor_lists(
             allocation_box,
-            allocation_positions=allocation_positions,
-            cell_atom_threshold=neighbor_cell_atom_threshold,
-            cutoff=float(model.radial_cutoff),
-            cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
-            periodic=forcePeriodic,
-        )
-        angular_neighbor_list = allocate_neighbor_list(
-            allocation_box,
-            allocation_positions=allocation_positions,
-            cell_atom_threshold=neighbor_cell_atom_threshold,
-            cutoff=float(model.angular_cutoff),
-            cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
-            periodic=forcePeriodic,
+            allocation_positions,
         )
         energy_fn = partial(
             _energyANI,
@@ -128,7 +141,10 @@ class ANI2xPotentialImpl(MLPotentialImpl):
             return energy_fn((selected_positions, box_vectors_nm))
 
         def _energy_and_forces_kjmol(positions_nm, box_vectors_nm=None):
-            energy, minus_forces = jax.value_and_grad(_energy_kjmol)(positions_nm, box_vectors_nm)
+            energy, minus_forces = jax.value_and_grad(_energy_kjmol)(
+                positions_nm,
+                box_vectors_nm,
+            )
             return energy, -minus_forces
 
         def _forces_kjmol(positions_nm, box_vectors_nm=None):
@@ -165,23 +181,21 @@ __all__ = [
 
 
 def allocate_neighbor_list(
-    allocation_box=None,
+    box_vectors_angstrom,
+    positions_angstrom,
     *,
-    allocation_positions=None,
     cell_atom_threshold: int,
     cutoff: float,
     cell_capacity_multiplier: float,
     periodic: bool,
 ):
-    if allocation_positions is None:
-        raise ValueError("ANI2x JAX requires preprocessing_positions.")
     if periodic:
-        if allocation_box is None:
+        if box_vectors_angstrom is None:
             raise ValueError("periodic neighbor-list allocation requires a box.")
-        allocation_positions = fractional_coordinates(allocation_positions, allocation_box)
+        positions_angstrom = fractional_coordinates(positions_angstrom, box_vectors_angstrom)
     return get_neighbors(
-        allocation_positions,
-        allocation_box,
+        positions_angstrom,
+        box_vectors_angstrom,
         cell_atom_threshold=cell_atom_threshold,
         cutoff=float(cutoff),
         cell_capacity_multiplier=cell_capacity_multiplier,
@@ -195,7 +209,6 @@ def fractional_coordinates(positions, box_vectors):
 
 
 def _restricted_box_inverse(box):
-    """Invert OpenMM's restricted upper-triangular box without a solver op."""
     a = box[0, 0]
     b = box[0, 1]
     c = box[0, 2]
@@ -210,24 +223,6 @@ def _restricted_box_inverse(box):
         ],
         dtype=box.dtype,
     )
-
-
-def preprocessing_allocation_positions(
-    preprocessing_positions,
-    atoms,
-    preprocessing_positions_unit,
-):
-    if preprocessing_positions is None:
-        raise ValueError("ANI2x JAX requires preprocessing_positions.")
-    if hasattr(preprocessing_positions, "value_in_unit"):
-        positions = preprocessing_positions.value_in_unit(unit.angstrom)
-    else:
-        scale = preprocessing_positions_unit.conversion_factor_to(unit.angstrom)
-        positions = jnp.asarray(preprocessing_positions, dtype=jnp.float32) * scale
-    positions = jnp.asarray(positions, dtype=jnp.float32)
-    if atoms is not None:
-        positions = positions[jnp.asarray(atoms, dtype=jnp.int32)]
-    return positions
 
 
 def _energyANI(
@@ -246,33 +241,14 @@ def _energyANI(
         box_vectors = box_vectors_nm * unit.nanometer.conversion_factor_to(unit.angstrom)
         positions = fractional_coordinates(positions, box_vectors)
         positions = positions - jnp.floor(positions)
-    radial_neighbors = get_neighbors(
+    energy = model(
         positions,
-        box_vectors,
-        cell_atom_threshold=int(model.neighbor_cell_atom_threshold),
-        cutoff=float(model.radial_cutoff),
-        cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
+        species,
+        box_vectors=box_vectors,
+        radial_neighbors=radial_neighbor_list,
+        angular_neighbors=angular_neighbor_list,
         periodic=pbc,
-        neighbors=radial_neighbor_list,
     )
-    angular_neighbors = get_neighbors(
-        positions,
-        box_vectors,
-        cell_atom_threshold=int(model.neighbor_cell_atom_threshold),
-        cutoff=float(model.angular_cutoff),
-        cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
-        periodic=pbc,
-        neighbors=angular_neighbor_list,
-    )
-    return (
-        jnp.sum(
-            model.local_node_energies(
-                positions,
-                species,
-                radial_neighbor_idx=radial_neighbors.idx,
-                angular_neighbor_idx=angular_neighbors.idx,
-                box_vectors=box_vectors if pbc else None,
-            )
-        )
-        * HARTREE_TO_KJMOL
-    )
+    if isinstance(energy, tuple):
+        energy = energy[0]
+    return energy * HARTREE_TO_KJMOL

@@ -11,48 +11,23 @@ from jax_md import space
 from openmm import unit
 from openmmml.mlpotential import MLPotential, MLPotentialImpl, MLPotentialImplFactory
 
-from .aimnet2 import (
-    AIMNET2_MODEL_NAMES,
-    get_neighbors,
-    load_aimnet2_model,
-)
+from .so3lr import SO3LR_MODEL_NAMES, get_sparse_neighbors, load_model
+
+jax.config.update("jax_default_matmul_precision", "highest")
 
 
-class AIMNet2PythonForcePotentialImplFactory(MLPotentialImplFactory):
-    def createImpl(
-        self,
-        name,
-        modelPath=None,
-        charge: float = 0.0,
-        total_charge: Optional[float] = None,
-        multiplicity: int = 1,
-        **args,
-    ):
+class SO3LRPythonForcePotentialImplFactory(MLPotentialImplFactory):
+    def createImpl(self, name, modelPath=None, charge: float = 0.0, **args):
         if name.endswith("-python"):
             name = name[: -len("-python")]
-        return AIMNet2PythonForcePotentialImpl(
-            name,
-            modelPath=modelPath,
-            charge=charge,
-            total_charge=total_charge,
-            multiplicity=multiplicity,
-        )
+        return SO3LRPythonForcePotentialImpl(name, modelPath=modelPath, charge=charge)
 
 
-class AIMNet2PythonForcePotentialImpl(MLPotentialImpl):
-    def __init__(
-        self,
-        name,
-        modelPath=None,
-        charge: float = 0.0,
-        total_charge: Optional[float] = None,
-        multiplicity: int = 1,
-    ):
+class SO3LRPythonForcePotentialImpl(MLPotentialImpl):
+    def __init__(self, name, modelPath=None, charge: float = 0.0):
         self.name = name
         self.modelPath = modelPath
         self.charge = charge
-        self.total_charge = total_charge
-        self.multiplicity = multiplicity
 
     def addForces(
         self,
@@ -66,53 +41,30 @@ class AIMNet2PythonForcePotentialImpl(MLPotentialImpl):
         neighbor_cell_atom_threshold: Optional[int] = None,
         neighbor_cell_capacity_multiplier: Optional[float] = None,
         periodic_neighborlist: bool = True,
-        multiplicity: Optional[int] = None,
         preprocessing_positions=None,
         preprocessing_positions_unit=unit.nanometer,
         **args,
     ):
-        multiplicity = self.multiplicity if multiplicity is None else multiplicity
-        if multiplicity != 1:
-            raise ValueError("AIMNet2 JAX only supports multiplicity=1")
-        includedAtoms = list(topology.atoms())
+        included_atoms = list(topology.atoms())
         if atoms is not None:
             atoms = list(atoms)
-            includedAtoms = [includedAtoms[i] for i in atoms]
-        species_np = np.asarray(
-            [atom.element.atomic_number for atom in includedAtoms],
-            dtype=np.int32,
+            included_atoms = [included_atoms[i] for i in atoms]
+        species = jnp.asarray(
+            [atom.element.atomic_number for atom in included_atoms],
+            dtype=jnp.int32,
         )
-        species = jnp.asarray(species_np, dtype=jnp.int32)
         indices = None if atoms is None else np.asarray(atoms, dtype=np.int32)
 
         model_ref = self.modelPath if modelPath is None else modelPath
         if model_ref is None:
-            if self.name not in AIMNET2_MODEL_NAMES:
-                raise ValueError(
-                    "modelPath must be provided for custom AIMNet2 PythonForce models"
-                )
-            model = load_aimnet2_model(
-                self.name,
-                neighbor_cell_atom_threshold=neighbor_cell_atom_threshold,
-                neighbor_cell_capacity_multiplier=neighbor_cell_capacity_multiplier,
-            )
-        else:
-            model = load_aimnet2_model(
-                self.name,
-                model_path=model_ref,
-                neighbor_cell_atom_threshold=neighbor_cell_atom_threshold,
-                neighbor_cell_capacity_multiplier=neighbor_cell_capacity_multiplier,
-            )
-
-        unsupported = sorted(set(species_np.tolist()) - set(model.implemented_species))
-        if unsupported:
-            supported = ", ".join(str(z) for z in model.implemented_species)
-            raise ValueError(
-                f"AIMNet2 does not support atomic numbers {unsupported}. "
-                f"Supported atomic numbers: {supported}."
-            )
-        if model.d3_c6ab is None or model.d3_rcov is None or model.d3_r2r4 is None:
-            raise ValueError("AIMNet2 checkpoint does not contain D3 parameters.")
+            if self.name not in SO3LR_MODEL_NAMES:
+                raise ValueError("modelPath must be provided for custom SO3LR PythonForce models")
+            model_ref = self.name
+        model = load_model(
+            model_ref,
+            neighbor_cell_atom_threshold=neighbor_cell_atom_threshold,
+            neighbor_cell_capacity_multiplier=neighbor_cell_capacity_multiplier,
+        )
 
         periodic = (
             topology.getPeriodicBoxVectors() is not None or system.usesPeriodicBoundaryConditions()
@@ -128,7 +80,7 @@ class AIMNet2PythonForcePotentialImpl(MLPotentialImpl):
                 dtype=jnp.float32,
             )
         if preprocessing_positions is None:
-            raise ValueError("AIMNet2 PythonForce requires preprocessing_positions.")
+            raise ValueError("SO3LR PythonForce requires preprocessing_positions.")
         if hasattr(preprocessing_positions, "value_in_unit"):
             allocation_positions = preprocessing_positions.value_in_unit(unit.angstrom)
         else:
@@ -149,21 +101,18 @@ class AIMNet2PythonForcePotentialImpl(MLPotentialImpl):
             allocation_box,
             allocation_positions,
             cell_atom_threshold=int(model.neighbor_cell_atom_threshold),
-            cutoff=float(model.lr_cutoff),
+            cutoff=float(model.long_range_cutoff),
             cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
             periodic=use_periodic_neighbors,
         )
         model_charge = self.charge if charge is None else charge
         if total_charge is not None:
             model_charge = total_charge
-        elif self.total_charge is not None:
-            model_charge = self.total_charge
 
         force = openmm.PythonForce(
-            _ComputeAIMNet2PythonForce(
+            _ComputeSO3LRPythonForce(
                 model=model,
                 species=species,
-                d3_data=model.prepare_d3_data(species_np),
                 total_charge=jnp.asarray(model_charge, dtype=jnp.float32),
                 neighbor_list=neighbor_list,
                 lr_neighbor_list=lr_neighbor_list,
@@ -176,15 +125,16 @@ class AIMNet2PythonForcePotentialImpl(MLPotentialImpl):
         system.addForce(force)
 
 
-for model_name in AIMNET2_MODEL_NAMES:
+for model_name in SO3LR_MODEL_NAMES:
     MLPotential.registerImplFactory(
-        f"{model_name}-python", AIMNet2PythonForcePotentialImplFactory()
+        f"{model_name}-python",
+        SO3LRPythonForcePotentialImplFactory(),
     )
 
 __all__ = [
     "MLPotential",
-    "AIMNet2PythonForcePotentialImplFactory",
-    "AIMNet2PythonForcePotentialImpl",
+    "SO3LRPythonForcePotentialImplFactory",
+    "SO3LRPythonForcePotentialImpl",
 ]
 
 
@@ -201,7 +151,7 @@ def allocate_neighbor_list(
         if box_vectors_angstrom is None:
             raise ValueError("periodic neighbor-list allocation requires a box.")
         positions_angstrom = fractional_coordinates(positions_angstrom, box_vectors_angstrom)
-    return get_neighbors(
+    return get_sparse_neighbors(
         positions_angstrom,
         box_vectors_angstrom,
         cutoff=float(cutoff),
@@ -211,18 +161,16 @@ def allocate_neighbor_list(
     )
 
 
-def _energyAIMNet2(
+def _energySO3LR(
     positions_nm,
     box_vectors_nm,
     model,
     species,
     total_charge,
-    d3_data,
     neighbor_list,
     lr_neighbor_list,
     periodic: bool,
 ):
-    """Evaluate AIMNet2 energy in kJ/mol from OpenMM positions in nm."""
     positions = positions_nm * unit.nanometer.conversion_factor_to(unit.angstrom)
     box_vectors = None
     if periodic:
@@ -231,10 +179,9 @@ def _energyAIMNet2(
     energy = model(
         positions,
         species,
-        d3_data=d3_data,
         box_vectors=box_vectors,
         neighbors=neighbor_list,
-        lr_neighbors=lr_neighbor_list,
+        neighbors_lr=lr_neighbor_list,
         periodic=periodic,
         total_charge=total_charge,
     )
@@ -268,13 +215,12 @@ def _restricted_box_inverse(box):
     )
 
 
-class _ComputeAIMNet2PythonForce:
+class _ComputeSO3LRPythonForce:
     def __init__(
         self,
         *,
         model,
         species,
-        d3_data,
         total_charge,
         neighbor_list,
         lr_neighbor_list,
@@ -283,7 +229,6 @@ class _ComputeAIMNet2PythonForce:
     ):
         self.model = model
         self.species = species
-        self.d3_data = d3_data
         self.total_charge = total_charge
         self.neighbor_list = neighbor_list
         self.lr_neighbor_list = lr_neighbor_list
@@ -298,13 +243,12 @@ class _ComputeAIMNet2PythonForce:
         selected_positions = (
             positions_nm if self.jax_indices is None else positions_nm[self.jax_indices]
         )
-        return _energyAIMNet2(
+        return _energySO3LR(
             selected_positions,
             box_vectors_nm,
             model=self.model,
             species=self.species,
             total_charge=self.total_charge,
-            d3_data=self.d3_data,
             neighbor_list=self.neighbor_list,
             lr_neighbor_list=self.lr_neighbor_list,
             periodic=self.periodic,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import tempfile
 import urllib.request
+from collections.abc import Mapping
 from functools import partial
 from typing import Iterable, Optional, Sequence
 
@@ -67,6 +68,9 @@ class FeNNixPotentialImpl(MLPotentialImpl):
         energy_terms: Optional[Sequence[str]] = None,
         periodic_neighborlist: bool = True,
         minimum_image: bool = True,
+        nblist_skin: float | None = 1.05,
+        nblist_mult_size: float | None = 1.05,
+        nblist_add_neigh: int | None = None,
         preprocessing_positions=None,
         preprocessing_positions_unit=unit.nanometer,
         **args,
@@ -174,7 +178,29 @@ class FeNNixPotentialImpl(MLPotentialImpl):
                 ).reshape(1, 3, 3)
                 preprocInputs["cells"] = cells_ang
                 preprocInputs["reciprocal_cells"] = np.linalg.inv(cells_ang)
-            preprocState, _ = model.preprocessing.init_with_output(preprocInputs)
+            preprocState = _configured_preprocessing_state(
+                model.preprocessing,
+                nblist_skin=nblist_skin,
+                nblist_mult_size=nblist_mult_size,
+                nblist_add_neigh=nblist_add_neigh,
+            )
+            preprocState, preprocOutput = model.preprocessing(preprocState, preprocInputs)
+            preprocState, _, _, overflow = model.preprocessing.check_reallocate(
+                preprocState,
+                preprocOutput,
+            )
+            if overflow:
+                preprocState, preprocOutput = model.preprocessing(preprocState, preprocInputs)
+                preprocState, _, _, overflow = model.preprocessing.check_reallocate(
+                    preprocState,
+                    preprocOutput,
+                )
+                if overflow:
+                    raise RuntimeError(
+                        "FeNNix JAX preprocessing overflow during initial allocation."
+                    )
+
+            coordinate_dtype = jnp.float64 if use_float64 else jnp.float32
 
             energy_fn = partial(
                 _energyFeNNix,
@@ -183,7 +209,7 @@ class FeNNixPotentialImpl(MLPotentialImpl):
                 preproc_state=preprocState,
                 pbc=forcePeriodic,
                 energy_scale=energyScale,
-                coordinate_dtype=jnp.float64 if use_float64 else jnp.float32,
+                coordinate_dtype=coordinate_dtype,
             )
             energy_and_forces_fn = partial(
                 _energyAndForcesFeNNix,
@@ -193,7 +219,7 @@ class FeNNixPotentialImpl(MLPotentialImpl):
                 pbc=forcePeriodic,
                 energy_scale=energyScale,
                 force_scale=forceScale,
-                coordinate_dtype=jnp.float64 if use_float64 else jnp.float32,
+                coordinate_dtype=coordinate_dtype,
             )
 
             def _energy_kjmol(positions_nm, box_vectors_nm=None):
@@ -202,7 +228,9 @@ class FeNNixPotentialImpl(MLPotentialImpl):
 
             def _energy_and_forces_kjmol(positions_nm, box_vectors_nm=None):
                 selected_positions = positions_nm if indices is None else positions_nm[indices]
-                energy, forces = energy_and_forces_fn((selected_positions, box_vectors_nm))
+                energy, forces = energy_and_forces_fn(
+                    (selected_positions, box_vectors_nm)
+                )
                 if indices is not None:
                     forces = jnp.zeros_like(positions_nm).at[indices].set(forces)
                 return energy, forces
@@ -210,18 +238,13 @@ class FeNNixPotentialImpl(MLPotentialImpl):
             def _forces_kjmol(positions_nm, box_vectors_nm=None):
                 return _energy_and_forces_kjmol(positions_nm, box_vectors_nm)[1]
 
-            (
-                force_mlir,
-                energy_mlir,
-                energy_and_forces_mlir,
-                compile_options_base64,
-            ) = export_jax_model(
+            force_mlir, energy_mlir, energy_and_forces_mlir, compile_options_base64 = export_jax_model(
                 num_system_atoms=numSystemAtoms,
                 force_function=_forces_kjmol,
                 energy_function=_energy_kjmol,
                 energy_and_forces_function=_energy_and_forces_kjmol,
                 periodic=forcePeriodic,
-                input_dtype=jnp.float64 if use_float64 else jnp.float32,
+                input_dtype=coordinate_dtype,
             )
 
             force = openmmjax.JaxForce(
@@ -279,6 +302,30 @@ def _initial_preprocessing_coordinates_angstrom(
             f"{fallback_shape}, got {coordinates.shape}"
         )
     return coordinates
+
+
+def _configured_preprocessing_state(
+    preprocessing,
+    *,
+    nblist_skin: float | None,
+    nblist_mult_size: float | None,
+    nblist_add_neigh: int | None,
+):
+    from flax.core import freeze, unfreeze
+
+    state = unfreeze(preprocessing.init())
+    layer_states = []
+    for layer_state in state["layers_state"]:
+        layer_state = unfreeze(layer_state)
+        if nblist_skin is not None and nblist_skin > 0:
+            layer_state["nblist_skin"] = float(nblist_skin)
+        if nblist_mult_size is not None:
+            layer_state["nblist_mult_size"] = float(nblist_mult_size)
+        if nblist_add_neigh is not None:
+            layer_state["add_neigh"] = int(nblist_add_neigh)
+        layer_states.append(freeze(layer_state))
+    state["layers_state"] = tuple(layer_states)
+    return freeze(state)
 
 
 def _preprocessFeNNix(
@@ -350,6 +397,25 @@ def _energyAndForcesFeNNix(
         (energy.squeeze() * energy_scale).astype(coordinate_dtype),
         (forces * force_scale).astype(coordinate_dtype),
     )
+
+
+def _preprocessing_overflow(processed):
+    overflow = jnp.asarray(False, dtype=bool)
+
+    def visit(value):
+        nonlocal overflow
+        if isinstance(value, Mapping):
+            for key, item in value.items():
+                key = str(key)
+                if key == "overflow" or key.endswith("_overflow"):
+                    overflow = overflow | jnp.asarray(item, dtype=bool)
+                visit(item)
+        elif isinstance(value, (tuple, list)):
+            for item in value:
+                visit(item)
+
+    visit(processed)
+    return overflow
 
 
 def _inverse_3x3(matrix):

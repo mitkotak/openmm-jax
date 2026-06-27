@@ -124,19 +124,28 @@ class OrbPotentialImpl(MLPotentialImpl):
             model_charge = self.total_charge
         model_multiplicity = self.multiplicity if multiplicity is None else multiplicity
 
-        allocation_positions = preprocessing_allocation_positions(
-            preprocessing_positions,
-            atoms,
-            preprocessing_positions_unit,
-        )
-        neighbor_list = allocate_neighbor_list(
-            allocation_box,
-            allocation_positions=allocation_positions,
-            cell_atom_threshold=int(model.neighbor_cell_atom_threshold),
-            cutoff=float(model.cutoff),
-            cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
-            periodic=forcePeriodic,
-        )
+        if preprocessing_positions is None:
+            raise ValueError("ORB JAX requires preprocessing_positions.")
+        if hasattr(preprocessing_positions, "value_in_unit"):
+            allocation_positions = preprocessing_positions.value_in_unit(unit.angstrom)
+        else:
+            scale = preprocessing_positions_unit.conversion_factor_to(unit.angstrom)
+            allocation_positions = jnp.asarray(preprocessing_positions, dtype=jnp.float32) * scale
+        allocation_positions = jnp.asarray(allocation_positions, dtype=jnp.float32)
+        if atoms is not None:
+            allocation_positions = allocation_positions[jnp.asarray(atoms, dtype=jnp.int32)]
+
+        def _allocate_neighbor_list(box_vectors_angstrom, positions_angstrom):
+            return allocate_neighbor_list(
+                box_vectors_angstrom,
+                positions_angstrom,
+                cell_atom_threshold=int(model.neighbor_cell_atom_threshold),
+                cutoff=float(model.cutoff),
+                cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
+                periodic=forcePeriodic,
+            )
+
+        neighbor_list = _allocate_neighbor_list(allocation_box, allocation_positions)
 
         total_charge_jax = jnp.asarray([model_charge], dtype=jnp.float32)
         total_spin_jax = jnp.asarray([model_multiplicity], dtype=jnp.float32)
@@ -187,6 +196,13 @@ class OrbPotentialImpl(MLPotentialImpl):
 for model_name in ORB_MODEL_NAMES:
     MLPotential.registerImplFactory(model_name, OrbPotentialImplFactory())
 
+__all__ = [
+    "MLPotential",
+    "OrbPotentialImplFactory",
+    "OrbPotentialImpl",
+]
+
+
 def _energyORB(
     state,
     model,
@@ -205,38 +221,37 @@ def _energyORB(
         box_vectors = box_vectors_nm * unit.nanometer.conversion_factor_to(unit.angstrom)
         positions = fractional_coordinates(positions, box_vectors)
         positions = positions - jnp.floor(positions)
-    return (
-        model(
-            positions,
-            species,
-            total_charge,
-            total_spin,
-            box_vectors=box_vectors,
-            neighbors=neighbor_list,
-            periodic=pbc,
-        )
-        * model.ev_to_kjmol
+    energy = model(
+        positions,
+        species,
+        total_charge,
+        total_spin,
+        box_vectors=box_vectors,
+        neighbors=neighbor_list,
+        periodic=pbc,
     )
+    return energy * model.ev_to_kjmol
 
 
 def allocate_neighbor_list(
-    allocation_box=None,
+    box_vectors_angstrom,
+    positions_angstrom,
     *,
-    allocation_positions=None,
     cell_atom_threshold: int,
     cutoff: float,
     cell_capacity_multiplier: float,
     periodic: bool,
 ):
-    if allocation_positions is None:
-        raise ValueError("ORB JAX requires preprocessing_positions.")
     if periodic:
-        if allocation_box is None:
+        if box_vectors_angstrom is None:
             raise ValueError("periodic neighbor-list allocation requires a box.")
-        allocation_positions = fractional_coordinates(allocation_positions, allocation_box)
+        positions_angstrom = fractional_coordinates(
+            positions_angstrom,
+            box_vectors_angstrom,
+        )
     return get_neighbors(
-        allocation_positions,
-        allocation_box,
+        positions_angstrom,
+        box_vectors_angstrom,
         cutoff=float(cutoff),
         cell_atom_threshold=cell_atom_threshold,
         cell_capacity_multiplier=cell_capacity_multiplier,
@@ -264,21 +279,3 @@ def _restricted_box_inverse(box):
         ],
         dtype=box.dtype,
     )
-
-
-def preprocessing_allocation_positions(
-    preprocessing_positions,
-    atoms,
-    preprocessing_positions_unit,
-):
-    if preprocessing_positions is None:
-        raise ValueError("ORB JAX requires preprocessing_positions.")
-    if hasattr(preprocessing_positions, "value_in_unit"):
-        positions = preprocessing_positions.value_in_unit(unit.angstrom)
-    else:
-        scale = preprocessing_positions_unit.conversion_factor_to(unit.angstrom)
-        positions = jnp.asarray(preprocessing_positions, dtype=jnp.float32) * scale
-    positions = jnp.asarray(positions, dtype=jnp.float32)
-    if atoms is not None:
-        positions = positions[jnp.asarray(atoms, dtype=jnp.int32)]
-    return positions

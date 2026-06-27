@@ -10,7 +10,10 @@ import openmm.app as app
 import openmmjax
 from jax_md import space
 from openmm import unit
-from openmmjax_export import configure_pjrt_plugin, export_jax_model
+from openmmjax_export import (
+    configure_pjrt_plugin,
+    export_jax_model,
+)
 from openmmml.mlpotential import MLPotential, MLPotentialImpl, MLPotentialImplFactory
 
 from .so3lr import SO3LR_MODEL_NAMES, get_sparse_neighbors, load_model
@@ -80,33 +83,50 @@ class SO3LRPotentialImpl(MLPotentialImpl):
                 [vector.value_in_unit(unit.angstrom) for vector in box_vectors],
                 dtype=jnp.float32,
             )
-        allocation_positions = preprocessing_allocation_positions(
-            preprocessing_positions,
-            atoms,
-            preprocessing_positions_unit,
-        )
-        if force_periodic:
-            allocation_positions = fractional_coordinates(allocation_positions, allocation_box)
-        neighbors = get_sparse_neighbors(
-            allocation_positions,
+        if preprocessing_positions is None:
+            raise ValueError("SO3LR JAX requires preprocessing_positions.")
+        if hasattr(preprocessing_positions, "value_in_unit"):
+            allocation_positions = preprocessing_positions.value_in_unit(unit.angstrom)
+        else:
+            scale = preprocessing_positions_unit.conversion_factor_to(unit.angstrom)
+            allocation_positions = jnp.asarray(preprocessing_positions, dtype=jnp.float32) * scale
+        allocation_positions = jnp.asarray(allocation_positions, dtype=jnp.float32)
+        if atoms is not None:
+            allocation_positions = allocation_positions[jnp.asarray(atoms, dtype=jnp.int32)]
+
+        def _allocate_neighbor_lists(box_vectors_angstrom, positions_angstrom):
+            if force_periodic:
+                positions_angstrom = fractional_coordinates(
+                    positions_angstrom,
+                    box_vectors_angstrom,
+                )
+            neighbors = get_sparse_neighbors(
+                positions_angstrom,
+                box_vectors_angstrom,
+                cutoff=float(model.cutoff),
+                cell_atom_threshold=int(model.neighbor_cell_atom_threshold),
+                cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
+                periodic=force_periodic,
+            )
+            neighbors_lr = get_sparse_neighbors(
+                positions_angstrom,
+                box_vectors_angstrom,
+                cutoff=float(model.long_range_cutoff),
+                cell_atom_threshold=int(model.neighbor_cell_atom_threshold),
+                cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
+                periodic=force_periodic,
+            )
+            return neighbors, neighbors_lr
+
+        neighbors, neighbors_lr = _allocate_neighbor_lists(
             allocation_box,
-            cutoff=float(model.cutoff),
-            cell_atom_threshold=int(model.neighbor_cell_atom_threshold),
-            cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
-            periodic=force_periodic,
-        )
-        neighbors_lr = get_sparse_neighbors(
             allocation_positions,
-            allocation_box,
-            cutoff=float(model.long_range_cutoff),
-            cell_atom_threshold=int(model.neighbor_cell_atom_threshold),
-            cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
-            periodic=force_periodic,
         )
 
         model_charge = self.charge if charge is None else charge
         if total_charge is not None:
             model_charge = total_charge
+
         energy_fn = partial(
             _energySO3LR,
             model=model,
@@ -155,24 +175,6 @@ for model_name in SO3LR_MODEL_NAMES:
     MLPotential.registerImplFactory(model_name, SO3LRPotentialImplFactory())
 
 
-def preprocessing_allocation_positions(
-    preprocessing_positions,
-    atoms,
-    preprocessing_positions_unit,
-):
-    if preprocessing_positions is None:
-        raise ValueError("SO3LR JAX requires preprocessing_positions.")
-    if hasattr(preprocessing_positions, "value_in_unit"):
-        positions = preprocessing_positions.value_in_unit(unit.angstrom)
-    else:
-        scale = preprocessing_positions_unit.conversion_factor_to(unit.angstrom)
-        positions = jnp.asarray(preprocessing_positions, dtype=jnp.float32) * scale
-    positions = jnp.asarray(positions, dtype=jnp.float32)
-    if atoms is not None:
-        positions = positions[jnp.asarray(atoms, dtype=jnp.int32)]
-    return positions
-
-
 def fractional_coordinates(positions, box_vectors):
     jax_box = jnp.swapaxes(jnp.asarray(box_vectors, dtype=positions.dtype), -1, -2)
     return space.transform(_restricted_box_inverse(jax_box), positions)
@@ -195,7 +197,15 @@ def _restricted_box_inverse(box):
     )
 
 
-def _energySO3LR(state, model, species, total_charge, pbc: bool, neighbors, neighbors_lr):
+def _energySO3LR(
+    state,
+    model,
+    species,
+    total_charge,
+    pbc: bool,
+    neighbors,
+    neighbors_lr,
+):
     positions_nm, box_vectors_nm = state
     positions = positions_nm * unit.nanometer.conversion_factor_to(unit.angstrom)
     box_vectors = None
@@ -203,15 +213,13 @@ def _energySO3LR(state, model, species, total_charge, pbc: bool, neighbors, neig
         box_vectors = box_vectors_nm * unit.nanometer.conversion_factor_to(unit.angstrom)
         positions = fractional_coordinates(positions, box_vectors)
         positions = positions - jnp.floor(positions)
-    return (
-        model(
-            positions,
-            species,
-            box_vectors=box_vectors,
-            neighbors=neighbors,
-            neighbors_lr=neighbors_lr,
-            periodic=pbc,
-            total_charge=total_charge,
-        )
-        * model.ev_to_kjmol
+    energy = model(
+        positions,
+        species,
+        box_vectors=box_vectors,
+        neighbors=neighbors,
+        neighbors_lr=neighbors_lr,
+        periodic=pbc,
+        total_charge=total_charge,
     )
+    return energy * model.ev_to_kjmol

@@ -87,19 +87,28 @@ class MACEPotentialImpl(MLPotentialImpl):
                 [vector.value_in_unit(unit.angstrom) for vector in box_vectors],
                 dtype=jnp.float32,
             )
-        allocation_positions = preprocessing_allocation_positions(
-            preprocessing_positions,
-            atoms,
-            preprocessing_positions_unit,
-        )
-        neighbor_list = allocate_neighbor_list(
-            allocation_box,
-            allocation_positions=allocation_positions,
-            cell_atom_threshold=neighbor_cell_atom_threshold,
-            cutoff=float(model.cutoff),
-            cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
-            periodic=forcePeriodic,
-        )
+        if preprocessing_positions is None:
+            raise ValueError("MACE JAX requires preprocessing_positions.")
+        if hasattr(preprocessing_positions, "value_in_unit"):
+            allocation_positions = preprocessing_positions.value_in_unit(unit.angstrom)
+        else:
+            scale = preprocessing_positions_unit.conversion_factor_to(unit.angstrom)
+            allocation_positions = jnp.asarray(preprocessing_positions, dtype=jnp.float32) * scale
+        allocation_positions = jnp.asarray(allocation_positions, dtype=jnp.float32)
+        if atoms is not None:
+            allocation_positions = allocation_positions[jnp.asarray(atoms, dtype=jnp.int32)]
+
+        def _allocate_neighbor_list(box_vectors_angstrom, positions_angstrom):
+            return allocate_neighbor_list(
+                box_vectors_angstrom,
+                positions_angstrom,
+                cell_atom_threshold=neighbor_cell_atom_threshold,
+                cutoff=float(model.cutoff),
+                cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
+                periodic=forcePeriodic,
+            )
+
+        neighbor_list = _allocate_neighbor_list(allocation_box, allocation_positions)
         energy_fn = partial(
             _energyMACE,
             model=model,
@@ -113,7 +122,10 @@ class MACEPotentialImpl(MLPotentialImpl):
             return energy_fn((selected_positions, box_vectors_nm))
 
         def _energy_and_forces_kjmol(positions_nm, box_vectors_nm=None):
-            energy, minus_forces = jax.value_and_grad(_energy_kjmol)(positions_nm, box_vectors_nm)
+            energy, minus_forces = jax.value_and_grad(_energy_kjmol)(
+                positions_nm,
+                box_vectors_nm,
+            )
             return energy, -minus_forces
 
         def _forces_kjmol(positions_nm, box_vectors_nm=None):
@@ -150,29 +162,25 @@ __all__ = [
 
 
 def allocate_neighbor_list(
-    allocation_box=None,
+    box_vectors_angstrom,
+    positions_angstrom,
     *,
-    allocation_positions=None,
     cell_atom_threshold: int,
     cutoff: float,
     cell_capacity_multiplier: float,
-    extra_capacity: int = 16,
     periodic: bool,
 ):
-    if allocation_positions is None:
-        raise ValueError("MACE JAX requires preprocessing_positions.")
     if periodic:
-        if allocation_box is None:
+        if box_vectors_angstrom is None:
             raise ValueError("periodic neighbor-list allocation requires a box.")
-        allocation_positions = fractional_coordinates(allocation_positions, allocation_box)
+        positions_angstrom = fractional_coordinates(positions_angstrom, box_vectors_angstrom)
     return get_neighbors(
-        allocation_positions,
-        allocation_box,
+        positions_angstrom,
+        box_vectors_angstrom,
         cutoff=float(cutoff),
         cell_atom_threshold=cell_atom_threshold,
         cell_capacity_multiplier=cell_capacity_multiplier,
         periodic=periodic,
-        extra_capacity=extra_capacity,
     )
 
 
@@ -182,7 +190,6 @@ def fractional_coordinates(positions, box_vectors):
 
 
 def _restricted_box_inverse(box):
-    """Invert OpenMM's restricted upper-triangular box without a solver op."""
     a = box[0, 0]
     b = box[0, 1]
     c = box[0, 2]
@@ -197,24 +204,6 @@ def _restricted_box_inverse(box):
         ],
         dtype=box.dtype,
     )
-
-
-def preprocessing_allocation_positions(
-    preprocessing_positions,
-    atoms,
-    preprocessing_positions_unit,
-):
-    if preprocessing_positions is None:
-        raise ValueError("MACE JAX requires preprocessing_positions.")
-    if hasattr(preprocessing_positions, "value_in_unit"):
-        positions = preprocessing_positions.value_in_unit(unit.angstrom)
-    else:
-        scale = preprocessing_positions_unit.conversion_factor_to(unit.angstrom)
-        positions = jnp.asarray(preprocessing_positions, dtype=jnp.float32) * scale
-    positions = jnp.asarray(positions, dtype=jnp.float32)
-    if atoms is not None:
-        positions = positions[jnp.asarray(atoms, dtype=jnp.int32)]
-    return positions
 
 
 def _energyMACE(
@@ -232,23 +221,11 @@ def _energyMACE(
         box_vectors = box_vectors_nm * unit.nanometer.conversion_factor_to(unit.angstrom)
         positions = fractional_coordinates(positions, box_vectors)
         positions = positions - jnp.floor(positions)
-    neighbors = get_neighbors(
+    energy = model(
         positions,
-        box_vectors,
-        cutoff=float(model.cutoff),
-        cell_atom_threshold=int(model.neighbor_cell_atom_threshold),
-        cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
-        periodic=pbc,
+        species,
+        box_vectors=box_vectors,
         neighbors=neighbor_list,
-        extra_capacity=16,
+        periodic=pbc,
     )
-    return (
-        model(
-            positions,
-            species,
-            box_vectors=box_vectors,
-            neighbors=neighbors,
-            periodic=pbc,
-        )
-        * HARTREE_TO_KJMOL
-    )
+    return energy * HARTREE_TO_KJMOL

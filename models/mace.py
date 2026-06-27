@@ -37,7 +37,6 @@ def get_neighbors(
     cutoff: float,
     cell_atom_threshold: int = 64,
     cell_capacity_multiplier: float = 2.0,
-    extra_capacity: int = 0,
     neighbors=None,
     periodic: bool = False,
     dr_threshold: float = 0.0,
@@ -73,7 +72,6 @@ def get_neighbors(
         )
         neighbors = neighbor_fn.allocate(
             positions,
-            extra_capacity=int(extra_capacity),
             **neighbor_kwargs,
         )
     return neighbors
@@ -514,7 +512,6 @@ class MACE(eqx.Module):
         neighbors=None,
         neighbor_idx=None,
         periodic: bool | None = False,
-        extra_capacity: int = 0,
     ):
         periodic = bool(periodic)
         if neighbor_idx is None:
@@ -524,7 +521,6 @@ class MACE(eqx.Module):
                 cutoff=float(self.cutoff),
                 cell_atom_threshold=int(self.neighbor_cell_atom_threshold),
                 cell_capacity_multiplier=float(self.neighbor_cell_capacity_multiplier),
-                extra_capacity=extra_capacity,
                 neighbors=neighbors,
                 periodic=periodic,
             )

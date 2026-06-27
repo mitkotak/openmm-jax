@@ -72,19 +72,28 @@ class ANI2xPythonForcePotentialImpl(MLPotentialImpl):
             topology.getPeriodicBoxVectors() is not None or system.usesPeriodicBoundaryConditions()
         )
         use_periodic_neighbors = periodic and periodic_neighborlist
-        allocation_box = _initial_box_vectors_angstrom(
-            topology,
-            system,
-            use_periodic_neighbors,
-        )
-        allocation_positions = preprocessing_allocation_positions(
-            preprocessing_positions,
-            atoms,
-            preprocessing_positions_unit,
-        )
+        allocation_box = None
+        if use_periodic_neighbors:
+            box_vectors = topology.getPeriodicBoxVectors()
+            if box_vectors is None:
+                box_vectors = system.getDefaultPeriodicBoxVectors()
+            allocation_box = jnp.asarray(
+                [vector.value_in_unit(unit.angstrom) for vector in box_vectors],
+                dtype=jnp.float32,
+            )
+        if preprocessing_positions is None:
+            raise ValueError("ANI2x PythonForce requires preprocessing_positions.")
+        if hasattr(preprocessing_positions, "value_in_unit"):
+            allocation_positions = preprocessing_positions.value_in_unit(unit.angstrom)
+        else:
+            scale = preprocessing_positions_unit.conversion_factor_to(unit.angstrom)
+            allocation_positions = jnp.asarray(preprocessing_positions, dtype=jnp.float32) * scale
+        allocation_positions = jnp.asarray(allocation_positions, dtype=jnp.float32)
+        if atoms is not None:
+            allocation_positions = allocation_positions[jnp.asarray(atoms, dtype=jnp.int32)]
         radial_neighbor_list = allocate_neighbor_list(
             allocation_box,
-            allocation_positions=allocation_positions,
+            allocation_positions,
             cell_atom_threshold=neighbor_cell_atom_threshold,
             cutoff=float(model.radial_cutoff),
             cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
@@ -92,7 +101,7 @@ class ANI2xPythonForcePotentialImpl(MLPotentialImpl):
         )
         angular_neighbor_list = allocate_neighbor_list(
             allocation_box,
-            allocation_positions=allocation_positions,
+            allocation_positions,
             cell_atom_threshold=neighbor_cell_atom_threshold,
             cutoff=float(model.angular_cutoff),
             cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
@@ -129,58 +138,25 @@ __all__ = [
 
 def allocate_neighbor_list(
     box_vectors_angstrom,
+    positions_angstrom,
     *,
-    allocation_positions=None,
     cell_atom_threshold: int,
     cutoff: float,
     cell_capacity_multiplier: float,
     periodic: bool,
 ):
-    positions = allocation_positions
-    if positions is None:
-        raise ValueError("ANI2x PythonForce requires preprocessing_positions.")
     if periodic:
         if box_vectors_angstrom is None:
             raise ValueError("periodic neighbor-list allocation requires a box.")
-        positions = fractional_coordinates(positions, box_vectors_angstrom)
+        positions_angstrom = fractional_coordinates(positions_angstrom, box_vectors_angstrom)
     return get_neighbors(
-        positions,
+        positions_angstrom,
         box_vectors_angstrom,
         cell_atom_threshold=cell_atom_threshold,
         cutoff=float(cutoff),
         cell_capacity_multiplier=cell_capacity_multiplier,
         periodic=periodic,
     )
-
-
-def _initial_box_vectors_angstrom(topology, system, periodic: bool):
-    if not periodic:
-        return None
-    box_vectors = topology.getPeriodicBoxVectors()
-    if box_vectors is None:
-        box_vectors = system.getDefaultPeriodicBoxVectors()
-    return jnp.asarray(
-        [vector.value_in_unit(unit.angstrom) for vector in box_vectors],
-        dtype=jnp.float32,
-    )
-
-
-def preprocessing_allocation_positions(
-    preprocessing_positions,
-    atoms,
-    preprocessing_positions_unit,
-):
-    if preprocessing_positions is None:
-        raise ValueError("ANI2x PythonForce requires preprocessing_positions.")
-    if hasattr(preprocessing_positions, "value_in_unit"):
-        positions = preprocessing_positions.value_in_unit(unit.angstrom)
-    else:
-        scale = preprocessing_positions_unit.conversion_factor_to(unit.angstrom)
-        positions = jnp.asarray(preprocessing_positions, dtype=jnp.float32) * scale
-    positions = jnp.asarray(positions, dtype=jnp.float32)
-    if atoms is not None:
-        positions = positions[jnp.asarray(atoms, dtype=jnp.int32)]
-    return positions
 
 
 def fractional_coordinates(positions, box_vectors):
@@ -221,36 +197,15 @@ def _energyANI(
         box_vectors = box_vectors_nm * unit.nanometer.conversion_factor_to(unit.angstrom)
         positions = fractional_coordinates(positions, box_vectors)
         positions = positions - jnp.floor(positions)
-    radial_neighbors = get_neighbors(
+    energy = model(
         positions,
-        box_vectors,
-        cell_atom_threshold=int(model.neighbor_cell_atom_threshold),
-        cutoff=float(model.radial_cutoff),
-        cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
+        species,
+        box_vectors=box_vectors,
+        radial_neighbors=radial_neighbor_list,
+        angular_neighbors=angular_neighbor_list,
         periodic=periodic,
-        neighbors=radial_neighbor_list,
     )
-    angular_neighbors = get_neighbors(
-        positions,
-        box_vectors,
-        cell_atom_threshold=int(model.neighbor_cell_atom_threshold),
-        cutoff=float(model.angular_cutoff),
-        cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
-        periodic=periodic,
-        neighbors=angular_neighbor_list,
-    )
-    return (
-        jnp.sum(
-            model.local_node_energies(
-                positions,
-                species,
-                radial_neighbor_idx=radial_neighbors.idx,
-                angular_neighbor_idx=angular_neighbors.idx,
-                box_vectors=box_vectors if periodic else None,
-            )
-        )
-        * HARTREE_TO_KJMOL
-    )
+    return energy * HARTREE_TO_KJMOL
 
 
 class _ComputeANI2xPythonForce:
@@ -305,6 +260,9 @@ class _ComputeANI2xPythonForce:
                 state.getPeriodicBoxVectors(asNumpy=True).value_in_unit(unit.nanometer),
                 dtype=jnp.float32,
             )
-        energy, energy_grad = self._compiled_energy_and_grad()(positions_nm, box_vectors_nm)
+        energy, energy_grad = self._compiled_energy_and_grad()(
+            positions_nm,
+            box_vectors_nm,
+        )
         forces = -energy_grad
         return float(jax.device_get(energy)), np.asarray(jax.device_get(forces))

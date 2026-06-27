@@ -77,7 +77,10 @@ def get_sparse_neighbors(
         fractional_coordinates=periodic,
         format=partition.NeighborListFormat.Sparse,
     )
-    return neighbor_fn.allocate(positions, **neighbor_kwargs)
+    return neighbor_fn.allocate(
+        positions,
+        **neighbor_kwargs,
+    )
 
 
 def so3lr_sparse_edges(positions, neighbors, *, displacement):
@@ -114,11 +117,12 @@ def get_sparse_edge_data(
         neighbors=neighbors,
         periodic=periodic,
     )
-    return so3lr_sparse_edges(
+    edge_data = so3lr_sparse_edges(
         positions,
         neighbors,
         displacement=displacement,
     )
+    return edge_data
 
 
 def safe_mask(mask, fn, operand, placeholder=0.0):

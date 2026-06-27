@@ -57,7 +57,6 @@ def get_neighbors(
     cell_atom_threshold: int,
     cutoff: float,
     cell_capacity_multiplier: float,
-    extra_capacity: int = 0,
     neighbors=None,
     periodic: bool = False,
 ):
@@ -92,7 +91,6 @@ def get_neighbors(
     )
     return neighbor_fn.allocate(
         positions,
-        extra_capacity=int(extra_capacity),
         **neighbor_kwargs,
     )
 
@@ -438,7 +436,6 @@ class ANI2x(eqx.Module):
         radial_neighbor_idx=None,
         angular_neighbor_idx=None,
         periodic: bool | None = False,
-        extra_capacity: int = 0,
     ):
         periodic = bool(periodic)
         if radial_neighbor_idx is None:
@@ -448,7 +445,6 @@ class ANI2x(eqx.Module):
                 cell_atom_threshold=int(self.neighbor_cell_atom_threshold),
                 cutoff=float(self.radial_cutoff),
                 cell_capacity_multiplier=float(self.neighbor_cell_capacity_multiplier),
-                extra_capacity=extra_capacity,
                 neighbors=radial_neighbors,
                 periodic=periodic,
             )
@@ -460,7 +456,6 @@ class ANI2x(eqx.Module):
                 cell_atom_threshold=int(self.neighbor_cell_atom_threshold),
                 cutoff=float(self.angular_cutoff),
                 cell_capacity_multiplier=float(self.neighbor_cell_capacity_multiplier),
-                extra_capacity=extra_capacity,
                 neighbors=angular_neighbors,
                 periodic=periodic,
             )
