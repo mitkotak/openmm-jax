@@ -21,14 +21,6 @@ static PJRT_NamedValue pjrtOption(const char* name, PJRT_NamedValue_Type type) {
     return option;
 }
 
-PjrtClientSession::PjrtClientSession(PjrtClientSession&& other) noexcept :
-        library(std::move(other.library)),
-        clientHandle(std::move(other.clientHandle)),
-        devices(std::move(other.devices)),
-        streamExtension(other.streamExtension) {
-    other.streamExtension = nullptr;
-}
-
 PjrtClientSession& PjrtClientSession::operator=(PjrtClientSession&& other) {
     if (this != &other) {
         close();
@@ -123,10 +115,6 @@ const PJRT_Api* PjrtClientSession::api() const {
 }
 
 PjrtPluginLibrary& PjrtClientSession::pluginLibrary() {
-    return library;
-}
-
-const PjrtPluginLibrary& PjrtClientSession::pluginLibrary() const {
     return library;
 }
 

@@ -43,12 +43,6 @@ void validateApiHeader(const PJRT_Api* api) {
 PjrtPluginLibrary::PjrtPluginLibrary() : library(nullptr), api(nullptr) {
 }
 
-PjrtPluginLibrary::PjrtPluginLibrary(PjrtPluginLibrary&& other) noexcept :
-        library(other.library), api(other.api), pluginPath(std::move(other.pluginPath)) {
-    other.library = nullptr;
-    other.api = nullptr;
-}
-
 PjrtPluginLibrary& PjrtPluginLibrary::operator=(PjrtPluginLibrary&& other) noexcept {
     if (this != &other) {
         close();

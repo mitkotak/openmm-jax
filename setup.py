@@ -1,10 +1,3 @@
-"""Python packaging for OpenMM-JAX.
-
-Build and install the native OpenMM plugins with CMake before invoking pip.
-This setup script builds the Python extension from the SWIG wrapper generated
-by CMake.
-"""
-
 from __future__ import annotations
 
 import importlib
@@ -75,7 +68,7 @@ def make_extension() -> Extension:
         name="_openmmjax",
         sources=["python/JaxPluginWrapper.cpp"],
         libraries=["OpenMM", "OpenMMJax"],
-        include_dirs=[str(openmm / "include"), str(ROOT / "openmmapi" / "include")],
+        include_dirs=[str(ROOT / "openmmapi" / "include"), str(openmm / "include")],
         library_dirs=library_dirs,
         runtime_library_dirs=runtime_library_dirs,
         extra_compile_args=extra_compile_args,

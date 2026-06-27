@@ -16,7 +16,6 @@ public:
     PjrtClientSession() = default;
     PjrtClientSession(const PjrtClientSession&) = delete;
     PjrtClientSession& operator=(const PjrtClientSession&) = delete;
-    PjrtClientSession(PjrtClientSession&& other) noexcept;
     PjrtClientSession& operator=(PjrtClientSession&& other);
     ~PjrtClientSession();
 
@@ -25,7 +24,6 @@ public:
 
     const PJRT_Api* api() const;
     PjrtPluginLibrary& pluginLibrary();
-    const PjrtPluginLibrary& pluginLibrary() const;
     PJRT_Client* client() const;
     PJRT_Device* device(int deviceIndex) const;
     bool hasDevice(int deviceIndex) const;

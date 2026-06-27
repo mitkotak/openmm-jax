@@ -12,6 +12,27 @@
 #include "OpenMMDrude.h"
 #include "openmm/RPMDIntegrator.h"
 #include "openmm/RPMDMonteCarloBarostat.h"
+#include <stdexcept>
+
+static void* unwrapOpenMMSwigPointer(PyObject* object, const char* typeName) {
+    PyObject* thisObject = PyObject_GetAttrString(object, "this");
+    if (thisObject == NULL)
+        throw std::runtime_error(std::string("Expected an OpenMM Python object for ") + typeName);
+    SwigPyObject* swigObject = SWIG_Python_GetSwigThis(thisObject);
+    void* pointer = (swigObject == NULL ? NULL : swigObject->ptr);
+    if (pointer == NULL) {
+        PyObject* pointerInt = PyNumber_Long(thisObject);
+        if (pointerInt != NULL) {
+            pointer = PyLong_AsVoidPtr(pointerInt);
+            Py_DECREF(pointerInt);
+        }
+        PyErr_Clear();
+    }
+    Py_DECREF(thisObject);
+    if (pointer == NULL)
+        throw std::runtime_error(std::string("Could not unwrap OpenMM Python object for ") + typeName);
+    return pointer;
+}
 %}
 
 %exception {
@@ -51,8 +72,10 @@ public:
             return self->OpenMM::Force::getForceGroup();
         }
 
-        int addToSystem(OpenMM::System& system) {
-            return system.addForce(self);
+        int addToSystem(PyObject* system) {
+            OpenMM::System* systemPointer = reinterpret_cast<OpenMM::System*>(
+                    unwrapOpenMMSwigPointer(system, "OpenMM::System"));
+            return systemPointer->addForce(self);
         }
 
         static JaxPlugin::JaxForce& cast(OpenMM::Force& force) {
@@ -62,6 +85,7 @@ public:
         static bool isinstance(OpenMM::Force& force) {
             return (dynamic_cast<JaxPlugin::JaxForce*>(&force) != NULL);
         }
+
     }
 };
 

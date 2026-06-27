@@ -57,7 +57,6 @@ public:
             const std::string& energyMlir,
             const std::string& energyAndForcesMlir,
             const std::string& compileOptions);
-
     void close();
 
     OpenMmPjrtExecutionResult execute(const OpenMmPjrtInputs& inputs,

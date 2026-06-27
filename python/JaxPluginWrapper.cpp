@@ -3502,15 +3502,14 @@ SWIG_Python_NonDynamicSetAttr(PyObject *obj, PyObject *name, PyObject *value) {
 #define SWIGTYPE_p_OpenMM__RMSDForce swig_types[62]
 #define SWIGTYPE_p_OpenMM__RPMDIntegrator swig_types[63]
 #define SWIGTYPE_p_OpenMM__RPMDMonteCarloBarostat swig_types[64]
-#define SWIGTYPE_p_OpenMM__System swig_types[65]
-#define SWIGTYPE_p_OpenMM__ThreeParticleAverageSite swig_types[66]
-#define SWIGTYPE_p_OpenMM__TwoParticleAverageSite swig_types[67]
-#define SWIGTYPE_p_OpenMM__VariableLangevinIntegrator swig_types[68]
-#define SWIGTYPE_p_OpenMM__VariableVerletIntegrator swig_types[69]
-#define SWIGTYPE_p_OpenMM__VerletIntegrator swig_types[70]
-#define SWIGTYPE_p_char swig_types[71]
-static swig_type_info *swig_types[73];
-static swig_module_info swig_module = {swig_types, 72, 0, 0, 0, 0};
+#define SWIGTYPE_p_OpenMM__ThreeParticleAverageSite swig_types[65]
+#define SWIGTYPE_p_OpenMM__TwoParticleAverageSite swig_types[66]
+#define SWIGTYPE_p_OpenMM__VariableLangevinIntegrator swig_types[67]
+#define SWIGTYPE_p_OpenMM__VariableVerletIntegrator swig_types[68]
+#define SWIGTYPE_p_OpenMM__VerletIntegrator swig_types[69]
+#define SWIGTYPE_p_char swig_types[70]
+static swig_type_info *swig_types[72];
+static swig_module_info swig_module = {swig_types, 71, 0, 0, 0, 0};
 #define SWIG_TypeQuery(name) SWIG_TypeQueryModule(&swig_module, &swig_module, name)
 #define SWIG_MangledTypeQuery(name) SWIG_MangledTypeQueryModule(&swig_module, &swig_module, name)
 
@@ -3765,6 +3764,27 @@ PyObject* Py_StripOpenMMUnits(PyObject *input) {
 #include "OpenMMDrude.h"
 #include "openmm/RPMDIntegrator.h"
 #include "openmm/RPMDMonteCarloBarostat.h"
+#include <stdexcept>
+
+static void* unwrapOpenMMSwigPointer(PyObject* object, const char* typeName) {
+    PyObject* thisObject = PyObject_GetAttrString(object, "this");
+    if (thisObject == NULL)
+        throw std::runtime_error(std::string("Expected an OpenMM Python object for ") + typeName);
+    SwigPyObject* swigObject = SWIG_Python_GetSwigThis(thisObject);
+    void* pointer = (swigObject == NULL ? NULL : swigObject->ptr);
+    if (pointer == NULL) {
+        PyObject* pointerInt = PyNumber_Long(thisObject);
+        if (pointerInt != NULL) {
+            pointer = PyLong_AsVoidPtr(pointerInt);
+            Py_DECREF(pointerInt);
+        }
+        PyErr_Clear();
+    }
+    Py_DECREF(thisObject);
+    if (pointer == NULL)
+        throw std::runtime_error(std::string("Could not unwrap OpenMM Python object for ") + typeName);
+    return pointer;
+}
 
 
 SWIGINTERN swig_type_info*
@@ -4118,8 +4138,10 @@ SWIGINTERNINLINE PyObject*
   return PyInt_FromLong((long) value);
 }
 
-SWIGINTERN int JaxPlugin_JaxForce_addToSystem(JaxPlugin::JaxForce *self,OpenMM::System &system){
-            return system.addForce(self);
+SWIGINTERN int JaxPlugin_JaxForce_addToSystem(JaxPlugin::JaxForce *self,PyObject *system){
+            OpenMM::System* systemPointer = reinterpret_cast<OpenMM::System*>(
+                    unwrapOpenMMSwigPointer(system, "OpenMM::System"));
+            return systemPointer->addForce(self);
         }
 SWIGINTERN JaxPlugin::JaxForce &JaxPlugin_JaxForce_cast(OpenMM::Force &force){
             return dynamic_cast<JaxPlugin::JaxForce&>(force);
@@ -4649,11 +4671,9 @@ fail:
 SWIGINTERN PyObject *_wrap_JaxForce_addToSystem(PyObject *self, PyObject *args) {
   PyObject *resultobj = 0;
   JaxPlugin::JaxForce *arg1 = 0 ;
-  OpenMM::System *arg2 = 0 ;
+  PyObject *arg2 = 0 ;
   void *argp1 = 0 ;
   int res1 = 0 ;
-  void *argp2 = 0 ;
-  int res2 = 0 ;
   PyObject *swig_obj[2] ;
   int result;
   
@@ -4664,17 +4684,10 @@ SWIGINTERN PyObject *_wrap_JaxForce_addToSystem(PyObject *self, PyObject *args) 
     SWIG_exception_fail(SWIG_ArgError(res1), "in method '" "JaxForce_addToSystem" "', argument " "1"" of type '" "JaxPlugin::JaxForce *""'"); 
   }
   arg1 = reinterpret_cast< JaxPlugin::JaxForce * >(argp1);
-  res2 = SWIG_ConvertPtr(swig_obj[1], &argp2, SWIGTYPE_p_OpenMM__System,  0 );
-  if (!SWIG_IsOK(res2)) {
-    SWIG_exception_fail(SWIG_ArgError(res2), "in method '" "JaxForce_addToSystem" "', argument " "2"" of type '" "OpenMM::System &""'"); 
-  }
-  if (!argp2) {
-    SWIG_exception_fail(SWIG_NullReferenceError, "invalid null reference " "in method '" "JaxForce_addToSystem" "', argument " "2"" of type '" "OpenMM::System &""'"); 
-  }
-  arg2 = reinterpret_cast< OpenMM::System * >(argp2);
+  arg2 = swig_obj[1];
   {
     try {
-      result = (int)JaxPlugin_JaxForce_addToSystem(arg1,*arg2);
+      result = (int)JaxPlugin_JaxForce_addToSystem(arg1,arg2);
     } catch (std::exception &e) {
       PyErr_SetString(PyExc_Exception, const_cast<char*>(e.what()));
       return NULL;
@@ -5020,7 +5033,6 @@ static swig_type_info _swigt__p_OpenMM__RGForce = {"_p_OpenMM__RGForce", "OpenMM
 static swig_type_info _swigt__p_OpenMM__RMSDForce = {"_p_OpenMM__RMSDForce", "OpenMM::RMSDForce *", 0, 0, (void*)0, 0};
 static swig_type_info _swigt__p_OpenMM__RPMDIntegrator = {"_p_OpenMM__RPMDIntegrator", "OpenMM::RPMDIntegrator *", 0, 0, (void*)0, 0};
 static swig_type_info _swigt__p_OpenMM__RPMDMonteCarloBarostat = {"_p_OpenMM__RPMDMonteCarloBarostat", "OpenMM::RPMDMonteCarloBarostat *", 0, 0, (void*)0, 0};
-static swig_type_info _swigt__p_OpenMM__System = {"_p_OpenMM__System", "OpenMM::System *", 0, 0, (void*)0, 0};
 static swig_type_info _swigt__p_OpenMM__ThreeParticleAverageSite = {"_p_OpenMM__ThreeParticleAverageSite", "OpenMM::ThreeParticleAverageSite *", 0, 0, (void*)0, 0};
 static swig_type_info _swigt__p_OpenMM__TwoParticleAverageSite = {"_p_OpenMM__TwoParticleAverageSite", "OpenMM::TwoParticleAverageSite *", 0, 0, (void*)0, 0};
 static swig_type_info _swigt__p_OpenMM__VariableLangevinIntegrator = {"_p_OpenMM__VariableLangevinIntegrator", "OpenMM::VariableLangevinIntegrator *", 0, 0, (void*)0, 0};
@@ -5094,7 +5106,6 @@ static swig_type_info *swig_type_initial[] = {
   &_swigt__p_OpenMM__RMSDForce,
   &_swigt__p_OpenMM__RPMDIntegrator,
   &_swigt__p_OpenMM__RPMDMonteCarloBarostat,
-  &_swigt__p_OpenMM__System,
   &_swigt__p_OpenMM__ThreeParticleAverageSite,
   &_swigt__p_OpenMM__TwoParticleAverageSite,
   &_swigt__p_OpenMM__VariableLangevinIntegrator,
@@ -5168,7 +5179,6 @@ static swig_cast_info _swigc__p_OpenMM__RGForce[] = {  {&_swigt__p_OpenMM__RGFor
 static swig_cast_info _swigc__p_OpenMM__RMSDForce[] = {  {&_swigt__p_OpenMM__RMSDForce, 0, 0, 0},{0, 0, 0, 0}};
 static swig_cast_info _swigc__p_OpenMM__RPMDIntegrator[] = {  {&_swigt__p_OpenMM__RPMDIntegrator, 0, 0, 0},{0, 0, 0, 0}};
 static swig_cast_info _swigc__p_OpenMM__RPMDMonteCarloBarostat[] = {  {&_swigt__p_OpenMM__RPMDMonteCarloBarostat, 0, 0, 0},{0, 0, 0, 0}};
-static swig_cast_info _swigc__p_OpenMM__System[] = {  {&_swigt__p_OpenMM__System, 0, 0, 0},{0, 0, 0, 0}};
 static swig_cast_info _swigc__p_OpenMM__ThreeParticleAverageSite[] = {  {&_swigt__p_OpenMM__ThreeParticleAverageSite, 0, 0, 0},{0, 0, 0, 0}};
 static swig_cast_info _swigc__p_OpenMM__TwoParticleAverageSite[] = {  {&_swigt__p_OpenMM__TwoParticleAverageSite, 0, 0, 0},{0, 0, 0, 0}};
 static swig_cast_info _swigc__p_OpenMM__VariableLangevinIntegrator[] = {  {&_swigt__p_OpenMM__VariableLangevinIntegrator, 0, 0, 0},{0, 0, 0, 0}};
@@ -5242,7 +5252,6 @@ static swig_cast_info *swig_cast_initial[] = {
   _swigc__p_OpenMM__RMSDForce,
   _swigc__p_OpenMM__RPMDIntegrator,
   _swigc__p_OpenMM__RPMDMonteCarloBarostat,
-  _swigc__p_OpenMM__System,
   _swigc__p_OpenMM__ThreeParticleAverageSite,
   _swigc__p_OpenMM__TwoParticleAverageSite,
   _swigc__p_OpenMM__VariableLangevinIntegrator,

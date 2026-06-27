@@ -11,7 +11,6 @@ public:
     PjrtPluginLibrary();
     PjrtPluginLibrary(const PjrtPluginLibrary&) = delete;
     PjrtPluginLibrary& operator=(const PjrtPluginLibrary&) = delete;
-    PjrtPluginLibrary(PjrtPluginLibrary&& other) noexcept;
     PjrtPluginLibrary& operator=(PjrtPluginLibrary&& other) noexcept;
     ~PjrtPluginLibrary();
 
