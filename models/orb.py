@@ -31,7 +31,7 @@ def get_neighbors(
     *,
     cutoff: float,
     cell_atom_threshold: int = 64,
-    cell_capacity_multiplier: float = 2.0,
+    cell_capacity_multiplier: float = 1.5,
     neighbors=None,
     periodic: bool = False,
     dr_threshold: float = 0.0,
@@ -557,7 +557,7 @@ class Orb(eqx.Module):
             config.get("neighbor_cell_atom_threshold", 64)
         )
         self.neighbor_cell_capacity_multiplier = float(
-            config.get("neighbor_cell_capacity_multiplier", 2.0)
+            config.get("neighbor_cell_capacity_multiplier", 1.5)
         )
         self.num_layers = int(config.get("num_layers", config.get("num_gnn_stacks", 5)))
         self.mlp_num_layers = int(config.get("mlp_num_layers", 3))

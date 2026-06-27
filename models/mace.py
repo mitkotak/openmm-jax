@@ -36,7 +36,7 @@ def get_neighbors(
     *,
     cutoff: float,
     cell_atom_threshold: int = 64,
-    cell_capacity_multiplier: float = 2.0,
+    cell_capacity_multiplier: float = 1.5,
     neighbors=None,
     periodic: bool = False,
     dr_threshold: float = 0.0,
@@ -432,7 +432,7 @@ class MACE(eqx.Module):
         self.silu_normalization = float(config["silu_normalization"])
         self.neighbor_cell_atom_threshold = int(config.get("neighbor_cell_atom_threshold", 192))
         self.neighbor_cell_capacity_multiplier = float(
-            config.get("neighbor_cell_capacity_multiplier", 1.25)
+            config.get("neighbor_cell_capacity_multiplier", 1.5)
         )
         self.sh_dims = tuple(int(x) for x in config["sh_dims"])
         self.sh_starts = tuple(int(x) for x in config["sh_starts"])

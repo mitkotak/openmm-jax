@@ -51,7 +51,7 @@ def get_sparse_neighbors(
     *,
     cutoff: float,
     cell_atom_threshold: int = 64,
-    cell_capacity_multiplier: float = 1.25,
+    cell_capacity_multiplier: float = 1.5,
     neighbors=None,
     periodic: bool = False,
 ):

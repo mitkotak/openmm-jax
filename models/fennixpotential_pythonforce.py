@@ -47,7 +47,6 @@ from .fennixpotential import (
     _configured_preprocessing_state,
     _initial_preprocessing_coordinates_angstrom,
     _inverse_3x3,
-    _preprocessing_overflow,
 )
 
 
@@ -85,7 +84,7 @@ class FeNNixPythonForcePotentialImpl(MLPotentialImpl):
         periodic_neighborlist: bool = True,
         minimum_image: bool = True,
         nblist_skin: float | None = 1.05,
-        nblist_mult_size: float | None = 1.05,
+        nblist_mult_size: float | None = 1.5,
         nblist_add_neigh: int | None = None,
         preprocessing_positions=None,
         preprocessing_positions_unit=unit.nanometer,
@@ -193,27 +192,10 @@ class FeNNixPythonForcePotentialImpl(MLPotentialImpl):
                 nblist_mult_size=nblist_mult_size,
                 nblist_add_neigh=nblist_add_neigh,
             )
-            preproc_state, preproc_output = model.preprocessing(
+            preproc_state, _ = model.preprocessing(
                 preproc_state,
                 preproc_inputs,
             )
-            preproc_state, _, _, overflow = model.preprocessing.check_reallocate(
-                preproc_state,
-                preproc_output,
-            )
-            if overflow:
-                preproc_state, preproc_output = model.preprocessing(
-                    preproc_state,
-                    preproc_inputs,
-                )
-                preproc_state, _, _, overflow = model.preprocessing.check_reallocate(
-                    preproc_state,
-                    preproc_output,
-                )
-                if overflow:
-                    raise RuntimeError(
-                        "FeNNix PythonForce preprocessing overflow during initial allocation."
-                    )
 
             force = openmm.PythonForce(
                 _ComputeFeNNixPythonForce(
@@ -288,28 +270,16 @@ class _ComputeFeNNixPythonForce:
         selected_positions = self._selected_positions_nm(positions_nm)
         processed = self._preprocess(selected_positions, box_vectors_nm)
         energy, forces, _ = self.model._energy_and_forces(self.model.variables, processed)
-        overflow = _preprocessing_overflow(processed)
         energy = energy.squeeze() * self.energy_scale
         forces = forces * self.force_scale
         if self.jax_indices is not None:
             forces = jnp.zeros_like(positions_nm).at[self.jax_indices].set(forces)
-        return energy, forces, overflow
+        return energy, forces
 
     def _compiled_energy_and_forces(self):
         if self._energy_and_forces is None:
             self._energy_and_forces = jax.jit(self._energy_and_forces_kjmol)
         return self._energy_and_forces
-
-    def _reallocate_preprocessing(self, positions_nm, box_vectors_nm):
-        selected_positions = self._selected_positions_nm(positions_nm)
-        processed = self._preprocess(selected_positions, box_vectors_nm)
-        preproc_state, _, _, overflow = self.model.preprocessing.check_reallocate(
-            self.preproc_state,
-            processed,
-        )
-        self.preproc_state = preproc_state
-        self._energy_and_forces = None
-        return bool(overflow)
 
     def __call__(self, state):
         with jax.enable_x64(self.use_float64):
@@ -323,20 +293,10 @@ class _ComputeFeNNixPythonForce:
                     state.getPeriodicBoxVectors(asNumpy=True).value_in_unit(unit.nanometer),
                     dtype=self.coordinate_dtype,
                 )
-            energy, forces, overflow = self._compiled_energy_and_forces()(
+            energy, forces = self._compiled_energy_and_forces()(
                 positions_nm,
                 box_vectors_nm,
             )
-            if bool(jax.device_get(overflow)):
-                self._reallocate_preprocessing(positions_nm, box_vectors_nm)
-                energy, forces, overflow = self._compiled_energy_and_forces()(
-                    positions_nm,
-                    box_vectors_nm,
-                )
-                if bool(jax.device_get(overflow)):
-                    raise RuntimeError(
-                        "FeNNix PythonForce preprocessing overflow after reallocation."
-                    )
         return float(jax.device_get(energy)), np.asarray(jax.device_get(forces))
 
 for model_name in FeNNixPythonForcePotentialImpl.KNOWN_MODELS:

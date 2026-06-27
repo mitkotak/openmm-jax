@@ -28,7 +28,7 @@ def get_neighbors(
     *,
     cutoff: float,
     cell_atom_threshold: int = 64,
-    cell_capacity_multiplier: float = 2.0,
+    cell_capacity_multiplier: float = 1.5,
     neighbors=None,
     periodic: bool = False,
     dr_threshold: float = 0.0,

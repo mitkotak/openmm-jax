@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import tempfile
 import urllib.request
-from collections.abc import Mapping
 from functools import partial
 from typing import Iterable, Optional, Sequence
 
@@ -69,7 +68,7 @@ class FeNNixPotentialImpl(MLPotentialImpl):
         periodic_neighborlist: bool = True,
         minimum_image: bool = True,
         nblist_skin: float | None = 1.05,
-        nblist_mult_size: float | None = 1.05,
+        nblist_mult_size: float | None = 1.5,
         nblist_add_neigh: int | None = None,
         preprocessing_positions=None,
         preprocessing_positions_unit=unit.nanometer,
@@ -184,21 +183,7 @@ class FeNNixPotentialImpl(MLPotentialImpl):
                 nblist_mult_size=nblist_mult_size,
                 nblist_add_neigh=nblist_add_neigh,
             )
-            preprocState, preprocOutput = model.preprocessing(preprocState, preprocInputs)
-            preprocState, _, _, overflow = model.preprocessing.check_reallocate(
-                preprocState,
-                preprocOutput,
-            )
-            if overflow:
-                preprocState, preprocOutput = model.preprocessing(preprocState, preprocInputs)
-                preprocState, _, _, overflow = model.preprocessing.check_reallocate(
-                    preprocState,
-                    preprocOutput,
-                )
-                if overflow:
-                    raise RuntimeError(
-                        "FeNNix JAX preprocessing overflow during initial allocation."
-                    )
+            preprocState, _ = model.preprocessing(preprocState, preprocInputs)
 
             coordinate_dtype = jnp.float64 if use_float64 else jnp.float32
 
@@ -397,25 +382,6 @@ def _energyAndForcesFeNNix(
         (energy.squeeze() * energy_scale).astype(coordinate_dtype),
         (forces * force_scale).astype(coordinate_dtype),
     )
-
-
-def _preprocessing_overflow(processed):
-    overflow = jnp.asarray(False, dtype=bool)
-
-    def visit(value):
-        nonlocal overflow
-        if isinstance(value, Mapping):
-            for key, item in value.items():
-                key = str(key)
-                if key == "overflow" or key.endswith("_overflow"):
-                    overflow = overflow | jnp.asarray(item, dtype=bool)
-                visit(item)
-        elif isinstance(value, (tuple, list)):
-            for item in value:
-                visit(item)
-
-    visit(processed)
-    return overflow
 
 
 def _inverse_3x3(matrix):
