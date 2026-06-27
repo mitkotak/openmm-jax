@@ -83,7 +83,7 @@ class FeNNixPythonForcePotentialImpl(MLPotentialImpl):
         energy_terms: Optional[Sequence[str]] = None,
         periodic_neighborlist: bool = True,
         minimum_image: bool = True,
-        nblist_skin: float | None = 1.05,
+        nblist_skin: float | None = 1.5,
         nblist_mult_size: float | None = 1.5,
         nblist_add_neigh: int | None = None,
         preprocessing_positions=None,
