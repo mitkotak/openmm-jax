@@ -25,6 +25,8 @@ class SO3LRPythonForcePotentialImplFactory(MLPotentialImplFactory):
 
 class SO3LRPythonForcePotentialImpl(MLPotentialImpl):
     def __init__(self, name, modelPath=None, charge: float = 0.0):
+        if modelPath is not None:
+            raise ValueError("SO3LR only supports the bundled checkpoint.")
         self.name = name
         self.modelPath = modelPath
         self.charge = charge
@@ -45,6 +47,8 @@ class SO3LRPythonForcePotentialImpl(MLPotentialImpl):
         preprocessing_positions_unit=unit.nanometer,
         **args,
     ):
+        if modelPath is not None:
+            raise ValueError("SO3LR only supports the bundled checkpoint.")
         included_atoms = list(topology.atoms())
         if atoms is not None:
             atoms = list(atoms)
@@ -254,11 +258,6 @@ class _ComputeSO3LRPythonForce:
             periodic=self.periodic,
         )
 
-    def _compiled_energy_and_grad(self):
-        if self._energy_and_grad is None:
-            self._energy_and_grad = jax.jit(jax.value_and_grad(self._energy_kjmol))
-        return self._energy_and_grad
-
     def __call__(self, state):
         positions_nm = jnp.asarray(
             state.getPositions(asNumpy=True).value_in_unit(unit.nanometer),
@@ -270,7 +269,9 @@ class _ComputeSO3LRPythonForce:
                 state.getPeriodicBoxVectors(asNumpy=True).value_in_unit(unit.nanometer),
                 dtype=jnp.float32,
             )
-        energy, energy_grad = self._compiled_energy_and_grad()(
+        if self._energy_and_grad is None:
+            self._energy_and_grad = jax.jit(jax.value_and_grad(self._energy_kjmol))
+        energy, energy_grad = self._energy_and_grad(
             positions_nm,
             box_vectors_nm,
         )

@@ -87,22 +87,17 @@ class AIMNet2PythonForcePotentialImpl(MLPotentialImpl):
 
         model_ref = self.modelPath if modelPath is None else modelPath
         if model_ref is None:
-            if self.name not in AIMNET2_MODEL_NAMES:
+            if self.name in AIMNET2_MODEL_NAMES:
+                model_ref = self.name
+            else:
                 raise ValueError(
                     "modelPath must be provided for custom AIMNet2 PythonForce models"
                 )
-            model = load_model(
-                self.name,
-                neighbor_cell_atom_threshold=neighbor_cell_atom_threshold,
-                neighbor_cell_capacity_multiplier=neighbor_cell_capacity_multiplier,
-            )
-        else:
-            model = load_model(
-                self.name,
-                model_path=model_ref,
-                neighbor_cell_atom_threshold=neighbor_cell_atom_threshold,
-                neighbor_cell_capacity_multiplier=neighbor_cell_capacity_multiplier,
-            )
+        model = load_model(
+            model_ref,
+            neighbor_cell_atom_threshold=neighbor_cell_atom_threshold,
+            neighbor_cell_capacity_multiplier=neighbor_cell_capacity_multiplier,
+        )
 
         unsupported = sorted(set(species_np.tolist()) - set(model.implemented_species))
         if unsupported:
@@ -310,11 +305,6 @@ class _ComputeAIMNet2PythonForce:
             periodic=self.periodic,
         )
 
-    def _compiled_energy_and_grad(self):
-        if self._energy_and_grad is None:
-            self._energy_and_grad = jax.jit(jax.value_and_grad(self._energy_kjmol))
-        return self._energy_and_grad
-
     def __call__(self, state):
         positions_nm = jnp.asarray(
             state.getPositions(asNumpy=True).value_in_unit(unit.nanometer),
@@ -326,7 +316,9 @@ class _ComputeAIMNet2PythonForce:
                 state.getPeriodicBoxVectors(asNumpy=True).value_in_unit(unit.nanometer),
                 dtype=jnp.float32,
             )
-        energy, energy_grad = self._compiled_energy_and_grad()(
+        if self._energy_and_grad is None:
+            self._energy_and_grad = jax.jit(jax.value_and_grad(self._energy_kjmol))
+        energy, energy_grad = self._energy_and_grad(
             positions_nm,
             box_vectors_nm,
         )

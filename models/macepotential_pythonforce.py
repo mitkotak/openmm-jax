@@ -231,11 +231,6 @@ class _ComputeMACEPythonForce:
             periodic=self.periodic,
         )
 
-    def _compiled_energy_and_grad(self):
-        if self._energy_and_grad is None:
-            self._energy_and_grad = jax.jit(jax.value_and_grad(self._energy_kjmol))
-        return self._energy_and_grad
-
     def __call__(self, state):
         positions_nm = jnp.asarray(
             state.getPositions(asNumpy=True).value_in_unit(unit.nanometer),
@@ -247,7 +242,9 @@ class _ComputeMACEPythonForce:
                 state.getPeriodicBoxVectors(asNumpy=True).value_in_unit(unit.nanometer),
                 dtype=jnp.float32,
             )
-        energy, energy_grad = self._compiled_energy_and_grad()(
+        if self._energy_and_grad is None:
+            self._energy_and_grad = jax.jit(jax.value_and_grad(self._energy_kjmol))
+        energy, energy_grad = self._energy_and_grad(
             positions_nm,
             box_vectors_nm,
         )

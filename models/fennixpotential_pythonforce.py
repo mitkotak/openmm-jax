@@ -276,11 +276,6 @@ class _ComputeFeNNixPythonForce:
             forces = jnp.zeros_like(positions_nm).at[self.jax_indices].set(forces)
         return energy, forces
 
-    def _compiled_energy_and_forces(self):
-        if self._energy_and_forces is None:
-            self._energy_and_forces = jax.jit(self._energy_and_forces_kjmol)
-        return self._energy_and_forces
-
     def __call__(self, state):
         with jax.enable_x64(self.use_float64):
             positions_nm = jnp.asarray(
@@ -293,7 +288,9 @@ class _ComputeFeNNixPythonForce:
                     state.getPeriodicBoxVectors(asNumpy=True).value_in_unit(unit.nanometer),
                     dtype=self.coordinate_dtype,
                 )
-            energy, forces = self._compiled_energy_and_forces()(
+            if self._energy_and_forces is None:
+                self._energy_and_forces = jax.jit(self._energy_and_forces_kjmol)
+            energy, forces = self._energy_and_forces(
                 positions_nm,
                 box_vectors_nm,
             )
