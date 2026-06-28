@@ -16,17 +16,17 @@ WATER_DIR = Path(__file__).with_name("water")
 # SIZES = [12, 24, 33, 93, 777, 2661, 6288, 12261, 21384, 98880]
 SIZES = [12, 24, 33, 93, 255, 777, 2661]
 WATER_PDBS = {
-    12: "water_0.5500nm_atoms_12.pdb",
-    24: "water_0.6223nm_atoms_24.pdb",
-    33: "water_0.7657nm_atoms_33.pdb",
-    93: "water_0.9849nm_atoms_93.pdb",
-    255: "water_1.4000nm_atoms_255.pdb",
-    777: "water_2.0017nm_atoms_777.pdb",
-    2661: "water_2.9989nm_atoms_2661.pdb",
-    6288: "water_4.0005nm_atoms_6288.pdb",
-    12261: "water_5.0004nm_atoms_12261.pdb",
-    21384: "water_5.9985nm_atoms_21384.pdb",
-    98880: "water_9.9997nm_atoms_98880.pdb",
+    12: "water_0.4933nm_atoms_12.pdb",
+    24: "water_0.6215nm_atoms_24.pdb",
+    33: "water_0.6911nm_atoms_33.pdb",
+    93: "water_0.9762nm_atoms_93.pdb",
+    255: "water_1.3663nm_atoms_255.pdb",
+    777: "water_1.9808nm_atoms_777.pdb",
+    2661: "water_2.9857nm_atoms_2661.pdb",
+    6288: "water_3.9768nm_atoms_6288.pdb",
+    12261: "water_4.9682nm_atoms_12261.pdb",
+    21384: "water_5.9803nm_atoms_21384.pdb",
+    98880: "water_9.9631nm_atoms_98880.pdb",
 }
 # CASES = (
 #     "mace-jax-off-s-23",
@@ -35,42 +35,54 @@ WATER_PDBS = {
 #     "mace-jax-off-m-24-python",
 # )
 # CASES = ("fennix-bio1-small-python", "fennix-bio1-small")
-# CASES = ("ani2x-jax-model0", "ani2x-jax-model0-python")
+# CASES = ("ani2x-jax-model0", "ani2x-jax-model0-python", "ani2x-jax-model0-pythonjaxforce")
 # CASES = ("aimnet2-jax", "aimnet2-jax-python")
 # CASES = ("aceff-jax-1.1-python", "aceff-jax-1.1")
 # CASES = ("so3lr", "so3lr-python")
 CASES = (
-    "ani2x-jax-model0", "ani2x-jax-model0-python",
-    "aimnet2-jax", "aimnet2-jax-python",
-    "aceff-jax-1.1", "aceff-jax-1.1-python",
-    "aceff-jax-2.0", "aceff-jax-2.0-python",
-    "mace-jax-off-s-23", "mace-jax-off-s-23-python",
-    "fennix-bio1-small-python", "fennix-bio1-small",
-    "so3lr", "so3lr-python",
-    "orb-jax-v3-conservative-omol", "orb-jax-v3-conservative-omol-python",
+    "ani2x-jax-model0", "ani2x-jax-model0-python", "ani2x-jax-model0-pythonjaxforce",
+    "aimnet2-jax", "aimnet2-jax-python", "aimnet2-jax-pythonjaxforce",
+    "aceff-jax-1.1", "aceff-jax-1.1-python", "aceff-jax-1.1-pythonjaxforce",
+    "aceff-jax-2.0", "aceff-jax-2.0-python", "aceff-jax-2.0-pythonjaxforce",
+    "mace-jax-off-s-23", "mace-jax-off-s-23-python", "mace-jax-off-s-23-pythonjaxforce",
+    "fennix-bio1-small", "fennix-bio1-small-python", "fennix-bio1-small-pythonjaxforce",
+    "so3lr", "so3lr-python", "so3lr-pythonjaxforce",
+    "orb-jax-v3-conservative-omol",
+    "orb-jax-v3-conservative-omol-python",
+    "orb-jax-v3-conservative-omol-pythonjaxforce",
 )
 
 CASE_LABELS = {
     "fennix-bio1-small": "FeNNix-S (JaxForce)",
     "fennix-bio1-small-python": "FeNNiX-S (PythonForce)",
+    "fennix-bio1-small-pythonjaxforce": "FeNNiX-S (PythonJaxForce)",
     "ani2x-jax-model0": "ANI2x-JAX model0 (JaxForce)",
     "ani2x-jax-ensemble": "ANI2x-JAX ensemble (JaxForce)",
     "ani2x-jax-model0-python": "ANI2x-JAX model0 (PythonForce)",
     "ani2x-jax-ensemble-python": "ANI2x-JAX ensemble (PythonForce)",
+    "ani2x-jax-model0-pythonjaxforce": "ANI2x-JAX model0 (PythonJaxForce)",
+    "ani2x-jax-ensemble-pythonjaxforce": "ANI2x-JAX ensemble (PythonJaxForce)",
     "aimnet2-jax": "AIMNet2-JAX (JaxForce)",
     "aimnet2-jax-python": "AIMNet2-JAX (PythonForce)",
+    "aimnet2-jax-pythonjaxforce": "AIMNet2-JAX (PythonJaxForce)",
     "mace-jax-off-s-23": "MACE-JAX-OFF-S(23) (JaxForce)",
     "mace-jax-off-m-24": "MACE-JAX-OFF-M(24) (JaxForce)",
     "mace-jax-off-s-23-python": "MACE-JAX-OFF-S(23) (PythonForce)",
     "mace-jax-off-m-24-python": "MACE-JAX-OFF-M(24) (PythonForce)",
+    "mace-jax-off-s-23-pythonjaxforce": "MACE-JAX-OFF-S(23) (PythonJaxForce)",
+    "mace-jax-off-m-24-pythonjaxforce": "MACE-JAX-OFF-M(24) (PythonJaxForce)",
     "aceff-jax-1.1": "AceFF-JAX-1.1 (JaxForce)",
     "aceff-jax-1.1-python": "AceFF-JAX-1.1 (PythonForce)",
     "aceff-jax-2.0": "AceFF-JAX-2.0 (JaxForce)",
     "aceff-jax-2.0-python": "AceFF-JAX-2.0 (PythonForce)",
+    "aceff-jax-1.1-pythonjaxforce": "AceFF-JAX-1.1 (PythonJaxForce)",
+    "aceff-jax-2.0-pythonjaxforce": "AceFF-JAX-2.0 (PythonJaxForce)",
     "so3lr": "SO3LR (JaxForce)",
     "so3lr-python": "SO3LR (PythonForce)",
+    "so3lr-pythonjaxforce": "SO3LR (PythonJaxForce)",
     "orb-jax-v3-conservative-omol": "ORB-v3 Conservative OMOL (JaxForce)",
     "orb-jax-v3-conservative-omol-python": "ORB-v3 Conservative OMOL (PythonForce)",
+    "orb-jax-v3-conservative-omol-pythonjaxforce": "ORB-v3 Conservative OMOL (PythonJaxForce)",
 }
 TEMP_K = 400.0
 FRICTION_PER_PS = 1.0
@@ -90,30 +102,44 @@ def setup_simulation(model_name: str, size: int) -> tuple[Simulation, dict[str, 
     topology = pdb.topology
     if model_name == "fennix-bio1-small":
         importlib.import_module("openmmjax_models.fennixpotential")
+    elif model_name == "fennix-bio1-small-pythonjaxforce":
+        importlib.import_module("openmmjax_models.fennixpotential_pythonjaxforce")
     elif model_name == "fennix-bio1-small-python":
         importlib.import_module("openmmjax_models.fennixpotential_pythonforce")
+    elif model_name.startswith("ani2x-jax-") and model_name.endswith("-pythonjaxforce"):
+        importlib.import_module("openmmjax_models.anipotential_pythonjaxforce")
     elif model_name.startswith("ani2x-jax-") and model_name.endswith("-python"):
         importlib.import_module("openmmjax_models.anipotential_pythonforce")
     elif model_name.startswith("ani2x-jax"):
         importlib.import_module("openmmjax_models.anipotential")
     elif model_name == "aimnet2-jax":
         importlib.import_module("openmmjax_models.aimnet2potential")
+    elif model_name == "aimnet2-jax-pythonjaxforce":
+        importlib.import_module("openmmjax_models.aimnet2potential_pythonjaxforce")
     elif model_name == "aimnet2-jax-python":
         importlib.import_module("openmmjax_models.aimnet2potential_pythonforce")
+    elif model_name.startswith("mace-jax-off-") and model_name.endswith("-pythonjaxforce"):
+        importlib.import_module("openmmjax_models.macepotential_pythonjaxforce")
     elif model_name.startswith("mace-jax-off-") and not model_name.endswith("-python"):
         importlib.import_module("openmmjax_models.macepotential")
     elif model_name.startswith("mace-jax-off-") and model_name.endswith("-python"):
         importlib.import_module("openmmjax_models.macepotential_pythonforce")
+    elif model_name.startswith("aceff-") and model_name.endswith("-pythonjaxforce"):
+        importlib.import_module("openmmjax_models.aceffpotential_pythonjaxforce")
     elif model_name.startswith("aceff-") and model_name.endswith("-python"):
         importlib.import_module("openmmjax_models.aceffpotential_pythonforce")
     elif model_name.startswith("aceff-"):
         importlib.import_module("openmmjax_models.aceffpotential")
     elif model_name == "so3lr":
         importlib.import_module("openmmjax_models.so3lrpotential")
+    elif model_name == "so3lr-pythonjaxforce":
+        importlib.import_module("openmmjax_models.so3lrpotential_pythonjaxforce")
     elif model_name == "so3lr-python":
         importlib.import_module("openmmjax_models.so3lrpotential_pythonforce")
     elif model_name == "orb-jax-v3-conservative-omol":
         importlib.import_module("openmmjax_models.orbpotential")
+    elif model_name == "orb-jax-v3-conservative-omol-pythonjaxforce":
+        importlib.import_module("openmmjax_models.orbpotential_pythonjaxforce")
     elif model_name == "orb-jax-v3-conservative-omol-python":
         importlib.import_module("openmmjax_models.orbpotential_pythonforce")
     else:

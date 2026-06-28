@@ -3,6 +3,7 @@
 #include "openmm/OpenMMException.h"
 #include "openmm/common/ContextSelector.h"
 #include "openmm/internal/ContextImpl.h"
+#include <cuda.h>
 #include <map>
 #include <sstream>
 #include <string>
@@ -125,4 +126,117 @@ double CudaCalcJaxForceKernel::execute(ContextImpl& context, bool includeForces,
     }
 
     return result.energy;
+}
+
+CudaCalcPythonJaxForceKernel::CudaCalcPythonJaxForceKernel(string name,
+        const Platform& platform, CudaContext& cu) :
+        CalcPythonJaxForceKernel(name, platform), cu(cu), energyComputation(nullptr),
+        forcesComputation(nullptr), energyAndForcesComputation(nullptr),
+        numParticles(0), usePeriodic(false) {
+}
+
+CudaCalcPythonJaxForceKernel::~CudaCalcPythonJaxForceKernel() {
+}
+
+void CudaCalcPythonJaxForceKernel::initialize(ContextImpl& context,
+        const PythonJaxForce& force) {
+    energyComputation = &force.getEnergyComputation();
+    forcesComputation = &force.getForcesComputation();
+    energyAndForcesComputation = &force.getEnergyAndForcesComputation();
+    usePeriodic = force.usesPeriodicBoundaryConditions();
+    numParticles = context.getSystem().getNumParticles();
+
+    ContextSelector selector(cu);
+    map<string, string> defines;
+    CUmodule program = cu.createModule(CudaJaxKernelSources::jaxForce, defines);
+    copyInputsKernel = cu.getKernel(program, "copyInputs");
+    addForcesKernel = cu.getKernel(program, "addForces");
+
+    int elementSize = (cu.getUseDoublePrecision() ? sizeof(double) : sizeof(float));
+    packedPositions.initialize(cu, 3*numParticles, elementSize, "pythonJaxPackedPositions");
+    boxVectors.initialize(cu, 9, elementSize, "pythonJaxBoxVectors");
+}
+
+void CudaCalcPythonJaxForceKernel::prepareInputs(CUstream openmmStream) {
+    CUdeviceptr packedPointer = packedPositions.getDevicePointer();
+    CUdeviceptr boxVectorsPointer = boxVectors.getDevicePointer();
+    CUdeviceptr posqPointer = cu.getPosq().getDevicePointer();
+    void* packed = reinterpret_cast<void*>(packedPointer);
+    void* box = reinterpret_cast<void*>(boxVectorsPointer);
+    void* posq = reinterpret_cast<void*>(posqPointer);
+    const int blockSize = 256;
+    int gridSize = (numParticles+blockSize-1)/blockSize;
+    CUdeviceptr atomIndexPointer = cu.getAtomIndexArray().getDevicePointer();
+    void* atomIndex = reinterpret_cast<void*>(atomIndexPointer);
+    void* args[] = {&packed,
+                    &box,
+                    &posq,
+                    &atomIndex,
+                    &numParticles,
+                    &usePeriodic,
+                    cu.getPeriodicBoxVecXPointer(),
+                    cu.getPeriodicBoxVecYPointer(),
+                    cu.getPeriodicBoxVecZPointer()};
+    CHECK_RESULT(cuLaunchKernel(copyInputsKernel, gridSize, 1, 1, blockSize, 1, 1, 0,
+            openmmStream, args, nullptr), "Failed to launch PythonJax input copy kernel");
+    CHECK_RESULT(cuStreamSynchronize(openmmStream),
+            "Failed to synchronize PythonJax input copy");
+}
+
+void CudaCalcPythonJaxForceKernel::addForces(CUdeviceptr forcePointer) {
+    int paddedNumAtoms = cu.getPaddedNumAtoms();
+    CUdeviceptr forceBufferPointer = cu.getForce().getDevicePointer();
+    void* forces = reinterpret_cast<void*>(forcePointer);
+    void* forceBuffer = reinterpret_cast<void*>(forceBufferPointer);
+    CUdeviceptr atomIndexPointer = cu.getAtomIndexArray().getDevicePointer();
+    void* atomIndex = reinterpret_cast<void*>(atomIndexPointer);
+    int forceSign = 1;
+    void* args[] = {&forces,
+                    &forceBuffer,
+                    &atomIndex,
+                    &numParticles,
+                    &paddedNumAtoms,
+                    &forceSign};
+    cu.executeKernel(addForcesKernel, args, numParticles);
+}
+
+double CudaCalcPythonJaxForceKernel::execute(ContextImpl& context, bool includeForces,
+        bool includeEnergy) {
+    if (!includeForces && !includeEnergy)
+        return 0.0;
+    CUstream openmmStream;
+    {
+        ContextSelector selector(cu);
+        openmmStream = cu.getCurrentStream();
+        prepareInputs(openmmStream);
+    }
+
+    PythonJaxForceComputationInputs inputs;
+    inputs.positions = static_cast<uintptr_t>(packedPositions.getDevicePointer());
+    inputs.boxVectors = static_cast<uintptr_t>(boxVectors.getDevicePointer());
+    inputs.numParticles = numParticles;
+    inputs.deviceIndex = cu.getDeviceIndex();
+    inputs.usePeriodic = usePeriodic;
+    inputs.useDoublePrecision = cu.getUseDoublePrecision();
+    inputs.parameters = context.getParameters();
+
+    const PythonJaxForceComputation* computation;
+    if (includeForces && includeEnergy)
+        computation = energyAndForcesComputation;
+    else if (includeForces)
+        computation = forcesComputation;
+    else
+        computation = energyComputation;
+
+    PythonJaxForceComputationResult result =
+            computation->compute(inputs, includeForces, includeEnergy);
+    if (includeForces) {
+        if (result.forces == 0)
+            throw OpenMMException("PythonJaxForce: computation did not return a force buffer");
+        ContextSelector selector(cu);
+        addForces(static_cast<CUdeviceptr>(result.forces));
+        CHECK_RESULT(cuStreamSynchronize(openmmStream),
+                "Failed to synchronize PythonJax force accumulation");
+    }
+    return includeEnergy ? result.energy : 0.0;
 }

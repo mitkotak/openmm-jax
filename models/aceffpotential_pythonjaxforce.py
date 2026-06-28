@@ -1,0 +1,254 @@
+from __future__ import annotations
+
+from functools import partial
+from typing import Iterable, Optional
+
+import jax
+import jax.numpy as jnp
+import openmm
+import openmm.app as app
+from jax_md import space
+from openmm import unit
+from openmmjax import PythonJaxForce
+from openmmml.mlpotential import MLPotential, MLPotentialImpl, MLPotentialImplFactory
+
+from .aceff import (
+    ACEFF_MODEL_NAMES,
+    get_neighbors,
+    load_model,
+)
+
+jax.config.update("jax_default_matmul_precision", "highest")
+
+
+class AceFFPythonJaxForcePotentialImplFactory(MLPotentialImplFactory):
+    def createImpl(self, name, modelPath=None, **args):
+        if name.endswith("-pythonjaxforce"):
+            name = name[: -len("-pythonjaxforce")]
+        return AceFFPythonJaxForcePotentialImpl(name, modelPath=modelPath)
+
+
+class AceFFPythonJaxForcePotentialImpl(MLPotentialImpl):
+    def __init__(self, name, modelPath=None):
+        self.name = name
+        self.modelPath = modelPath
+
+    def addForces(
+        self,
+        topology: app.Topology,
+        system: openmm.System,
+        atoms: Optional[Iterable[int]],
+        forceGroup: int,
+        modelPath: Optional[str] = None,
+        charge: float = 0.0,
+        total_charge: Optional[float] = None,
+        neighbor_cell_atom_threshold: Optional[int] = None,
+        neighbor_cell_capacity_multiplier: Optional[float] = None,
+        periodic_neighborlist: bool = True,
+        preprocessing_positions=None,
+        preprocessing_positions_unit=unit.nanometer,
+        **args,
+    ):
+        if atoms is not None:
+            raise ValueError("AceFF PythonJaxForce does not support atom subsets")
+        includedAtoms = list(topology.atoms())
+        species = jnp.asarray(
+            [atom.element.atomic_number for atom in includedAtoms],
+            dtype=jnp.int32,
+        )
+
+        model_ref = modelPath if modelPath is not None else self.modelPath
+        if model_ref is None:
+            if self.name in ACEFF_MODEL_NAMES:
+                model_ref = self.name
+            else:
+                raise ValueError(
+                    "modelPath must be provided for custom AceFF PythonJaxForce models"
+                )
+        model = load_model(
+            model_ref,
+            neighbor_cell_atom_threshold=neighbor_cell_atom_threshold,
+            neighbor_cell_capacity_multiplier=neighbor_cell_capacity_multiplier,
+        )
+
+        periodic = (
+            topology.getPeriodicBoxVectors() is not None or system.usesPeriodicBoundaryConditions()
+        )
+        use_periodic_neighbors = periodic and periodic_neighborlist
+        allocation_box = None
+        if use_periodic_neighbors:
+            box_vectors = topology.getPeriodicBoxVectors()
+            if box_vectors is None:
+                box_vectors = system.getDefaultPeriodicBoxVectors()
+            allocation_box = jnp.asarray(
+                [vector.value_in_unit(unit.angstrom) for vector in box_vectors],
+                dtype=jnp.float32,
+            )
+        if preprocessing_positions is None:
+            raise ValueError("AceFF PythonJaxForce requires preprocessing_positions.")
+        if hasattr(preprocessing_positions, "value_in_unit"):
+            allocation_positions = preprocessing_positions.value_in_unit(unit.angstrom)
+        else:
+            scale = preprocessing_positions_unit.conversion_factor_to(unit.angstrom)
+            allocation_positions = jnp.asarray(preprocessing_positions, dtype=jnp.float32) * scale
+        allocation_positions = jnp.asarray(allocation_positions, dtype=jnp.float32)
+        neighbor_list = allocate_neighbor_list(
+            allocation_box,
+            allocation_positions,
+            cell_atom_threshold=int(model.neighbor_cell_atom_threshold),
+            cutoff=float(model.cutoff),
+            cell_capacity_multiplier=float(model.neighbor_cell_capacity_multiplier),
+            periodic=use_periodic_neighbors,
+        )
+        model_charge = charge if total_charge is None else total_charge
+
+        compute = _ComputeAceFFPythonJaxForce(
+            model=model,
+            species=species,
+            total_charge=jnp.asarray(model_charge, dtype=jnp.float32),
+            neighbor_list=neighbor_list,
+            periodic=use_periodic_neighbors,
+        )
+        force = PythonJaxForce(
+            compute.energy,
+            compute.forces,
+            compute.energy_and_forces,
+            {},
+        )
+        force.setForceGroup(forceGroup)
+        force.setUsesPeriodicBoundaryConditions(use_periodic_neighbors)
+        system.addForce(force)
+
+
+for model_name in ACEFF_MODEL_NAMES:
+    MLPotential.registerImplFactory(
+        f"{model_name}-pythonjaxforce", AceFFPythonJaxForcePotentialImplFactory()
+    )
+
+__all__ = [
+    "MLPotential",
+    "AceFFPythonJaxForcePotentialImplFactory",
+    "AceFFPythonJaxForcePotentialImpl",
+]
+
+
+def allocate_neighbor_list(
+    box_vectors_angstrom,
+    positions_angstrom,
+    *,
+    cell_atom_threshold: int,
+    cutoff: float,
+    cell_capacity_multiplier: float,
+    periodic: bool,
+):
+    if periodic:
+        if box_vectors_angstrom is None:
+            raise ValueError("periodic neighbor-list allocation requires a box.")
+        positions_angstrom = fractional_coordinates(positions_angstrom, box_vectors_angstrom)
+    return get_neighbors(
+        positions_angstrom,
+        box_vectors_angstrom,
+        cutoff=float(cutoff),
+        cell_atom_threshold=int(cell_atom_threshold),
+        cell_capacity_multiplier=float(cell_capacity_multiplier),
+        periodic=periodic,
+    )
+
+
+def fractional_coordinates(positions, box_vectors):
+    jax_box = jnp.swapaxes(jnp.asarray(box_vectors, dtype=positions.dtype), -1, -2)
+    return space.transform(_restricted_box_inverse(jax_box), positions)
+
+
+def _restricted_box_inverse(box):
+    a = box[0, 0]
+    b = box[0, 1]
+    c = box[0, 2]
+    d = box[1, 1]
+    e = box[1, 2]
+    f = box[2, 2]
+    return jnp.array(
+        [
+            [1.0 / a, -b / (a * d), (b * e - c * d) / (a * d * f)],
+            [0.0, 1.0 / d, -e / (d * f)],
+            [0.0, 0.0, 1.0 / f],
+        ],
+        dtype=box.dtype,
+    )
+
+
+def _energyAceFF(
+    state,
+    model,
+    species,
+    total_charge,
+    pbc: bool,
+    neighbor_list,
+):
+    """Evaluate AceFF energy in kJ/mol from OpenMM positions in nm."""
+    positions_nm, box_vectors_nm = state
+    positions = positions_nm * unit.nanometer.conversion_factor_to(unit.angstrom)
+    box_vectors = None
+    if pbc and box_vectors_nm is not None:
+        box_vectors = box_vectors_nm * unit.nanometer.conversion_factor_to(unit.angstrom)
+        positions = fractional_coordinates(positions, box_vectors)
+        positions = positions - jnp.floor(positions)
+    energy = model(
+        positions,
+        species,
+        box_vectors=box_vectors,
+        neighbors=neighbor_list,
+        periodic=pbc,
+        total_charge=total_charge,
+    )
+    return energy * model.ev_to_kjmol
+
+
+class _ComputeAceFFPythonJaxForce:
+    def __init__(
+        self,
+        *,
+        model,
+        species,
+        total_charge,
+        neighbor_list,
+        periodic: bool,
+    ):
+        self.model = model
+        self.species = species
+        self.total_charge = total_charge
+        self.neighbor_list = neighbor_list
+        self.periodic = bool(periodic)
+        self.energy_fn = partial(
+            _energyAceFF,
+            model=model,
+            species=species,
+            total_charge=total_charge,
+            pbc=self.periodic,
+            neighbor_list=neighbor_list,
+        )
+        self._energy = None
+        self._forces = None
+        self._energy_and_grad = None
+
+    def _energy_kjmol(self, positions_nm, box_vectors_nm=None):
+        return self.energy_fn((positions_nm, box_vectors_nm))
+
+    def energy(self, positions_nm, box_vectors_nm=None):
+        if self._energy is None:
+            self._energy = jax.jit(self._energy_kjmol)
+        return self._energy(positions_nm, box_vectors_nm)
+
+    def forces(self, positions_nm, box_vectors_nm=None):
+        if self._forces is None:
+            self._forces = jax.jit(jax.grad(self._energy_kjmol))
+        return -self._forces(positions_nm, box_vectors_nm)
+
+    def energy_and_forces(self, positions_nm, box_vectors_nm=None):
+        if self._energy_and_grad is None:
+            self._energy_and_grad = jax.jit(jax.value_and_grad(self._energy_kjmol))
+        energy, minus_forces = self._energy_and_grad(
+            positions_nm,
+            box_vectors_nm,
+        )
+        return energy, -minus_forces

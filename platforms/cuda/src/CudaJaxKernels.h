@@ -36,6 +36,30 @@ private:
     void addForces(CUdeviceptr forcePointer);
 };
 
+class CudaCalcPythonJaxForceKernel : public CalcPythonJaxForceKernel {
+public:
+    CudaCalcPythonJaxForceKernel(std::string name, const OpenMM::Platform& platform,
+            OpenMM::CudaContext& cu);
+    ~CudaCalcPythonJaxForceKernel();
+    void initialize(OpenMM::ContextImpl& context, const PythonJaxForce& force) override;
+    double execute(OpenMM::ContextImpl& context, bool includeForces, bool includeEnergy) override;
+
+private:
+    OpenMM::CudaContext& cu;
+    const PythonJaxForceComputation* energyComputation;
+    const PythonJaxForceComputation* forcesComputation;
+    const PythonJaxForceComputation* energyAndForcesComputation;
+    OpenMM::CudaArray packedPositions;
+    OpenMM::CudaArray boxVectors;
+    int numParticles;
+    bool usePeriodic;
+    CUfunction copyInputsKernel;
+    CUfunction addForcesKernel;
+
+    void prepareInputs(CUstream openmmStream);
+    void addForces(CUdeviceptr forcePointer);
+};
+
 } // namespace JaxPlugin
 
 #endif

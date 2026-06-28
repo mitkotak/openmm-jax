@@ -59,6 +59,173 @@ class _SwigNonDynamicMeta(type):
 
 
 import openmm.openmm
+class SwigPyIterator(object):
+    thisown = property(lambda x: x.this.own(), lambda x, v: x.this.own(v), doc="The membership flag")
+
+    def __init__(self, *args, **kwargs):
+        raise AttributeError("No constructor defined - class is abstract")
+    __repr__ = _swig_repr
+    __swig_destroy__ = _openmmjax.delete_SwigPyIterator
+
+    def value(self):
+        return _openmmjax.SwigPyIterator_value(self)
+
+    def incr(self, n=1):
+        return _openmmjax.SwigPyIterator_incr(self, n)
+
+    def decr(self, n=1):
+        return _openmmjax.SwigPyIterator_decr(self, n)
+
+    def distance(self, x):
+        return _openmmjax.SwigPyIterator_distance(self, x)
+
+    def equal(self, x):
+        return _openmmjax.SwigPyIterator_equal(self, x)
+
+    def copy(self):
+        return _openmmjax.SwigPyIterator_copy(self)
+
+    def next(self):
+        return _openmmjax.SwigPyIterator_next(self)
+
+    def __next__(self):
+        return _openmmjax.SwigPyIterator___next__(self)
+
+    def previous(self):
+        return _openmmjax.SwigPyIterator_previous(self)
+
+    def advance(self, n):
+        return _openmmjax.SwigPyIterator_advance(self, n)
+
+    def __eq__(self, x):
+        return _openmmjax.SwigPyIterator___eq__(self, x)
+
+    def __ne__(self, x):
+        return _openmmjax.SwigPyIterator___ne__(self, x)
+
+    def __iadd__(self, n):
+        return _openmmjax.SwigPyIterator___iadd__(self, n)
+
+    def __isub__(self, n):
+        return _openmmjax.SwigPyIterator___isub__(self, n)
+
+    def __add__(self, n):
+        return _openmmjax.SwigPyIterator___add__(self, n)
+
+    def __sub__(self, *args):
+        return _openmmjax.SwigPyIterator___sub__(self, *args)
+    def __iter__(self):
+        return self
+
+# Register SwigPyIterator in _openmmjax:
+_openmmjax.SwigPyIterator_swigregister(SwigPyIterator)
+class StringDoubleMap(object):
+    thisown = property(lambda x: x.this.own(), lambda x, v: x.this.own(v), doc="The membership flag")
+    __repr__ = _swig_repr
+
+    def iterator(self):
+        return _openmmjax.StringDoubleMap_iterator(self)
+    def __iter__(self):
+        return self.iterator()
+
+    def __nonzero__(self):
+        return _openmmjax.StringDoubleMap___nonzero__(self)
+
+    def __bool__(self):
+        return _openmmjax.StringDoubleMap___bool__(self)
+
+    def __len__(self):
+        return _openmmjax.StringDoubleMap___len__(self)
+    def __iter__(self):
+        return self.key_iterator()
+    def iterkeys(self):
+        return self.key_iterator()
+    def itervalues(self):
+        return self.value_iterator()
+    def iteritems(self):
+        return self.iterator()
+
+    def __getitem__(self, key):
+        return _openmmjax.StringDoubleMap___getitem__(self, key)
+
+    def __delitem__(self, key):
+        return _openmmjax.StringDoubleMap___delitem__(self, key)
+
+    def has_key(self, key):
+        return _openmmjax.StringDoubleMap_has_key(self, key)
+
+    def keys(self):
+        return _openmmjax.StringDoubleMap_keys(self)
+
+    def values(self):
+        return _openmmjax.StringDoubleMap_values(self)
+
+    def items(self):
+        return _openmmjax.StringDoubleMap_items(self)
+
+    def __contains__(self, key):
+        return _openmmjax.StringDoubleMap___contains__(self, key)
+
+    def key_iterator(self):
+        return _openmmjax.StringDoubleMap_key_iterator(self)
+
+    def value_iterator(self):
+        return _openmmjax.StringDoubleMap_value_iterator(self)
+
+    def __setitem__(self, *args):
+        return _openmmjax.StringDoubleMap___setitem__(self, *args)
+
+    def asdict(self):
+        return _openmmjax.StringDoubleMap_asdict(self)
+
+    def __init__(self, *args):
+        _openmmjax.StringDoubleMap_swiginit(self, _openmmjax.new_StringDoubleMap(*args))
+
+    def empty(self):
+        return _openmmjax.StringDoubleMap_empty(self)
+
+    def size(self):
+        return _openmmjax.StringDoubleMap_size(self)
+
+    def swap(self, v):
+        return _openmmjax.StringDoubleMap_swap(self, v)
+
+    def begin(self):
+        return _openmmjax.StringDoubleMap_begin(self)
+
+    def end(self):
+        return _openmmjax.StringDoubleMap_end(self)
+
+    def rbegin(self):
+        return _openmmjax.StringDoubleMap_rbegin(self)
+
+    def rend(self):
+        return _openmmjax.StringDoubleMap_rend(self)
+
+    def clear(self):
+        return _openmmjax.StringDoubleMap_clear(self)
+
+    def get_allocator(self):
+        return _openmmjax.StringDoubleMap_get_allocator(self)
+
+    def count(self, x):
+        return _openmmjax.StringDoubleMap_count(self, x)
+
+    def erase(self, *args):
+        return _openmmjax.StringDoubleMap_erase(self, *args)
+
+    def find(self, x):
+        return _openmmjax.StringDoubleMap_find(self, x)
+
+    def lower_bound(self, x):
+        return _openmmjax.StringDoubleMap_lower_bound(self, x)
+
+    def upper_bound(self, x):
+        return _openmmjax.StringDoubleMap_upper_bound(self, x)
+    __swig_destroy__ = _openmmjax.delete_StringDoubleMap
+
+# Register StringDoubleMap in _openmmjax:
+_openmmjax.StringDoubleMap_swigregister(StringDoubleMap)
 class JaxForce(openmm.openmm.Force):
     thisown = property(lambda x: x.this.own(), lambda x, v: x.this.own(v), doc="The membership flag")
     __repr__ = _swig_repr
@@ -99,12 +266,6 @@ class JaxForce(openmm.openmm.Force):
     def getPjrtPluginPath(self):
         return _openmmjax.JaxForce_getPjrtPluginPath(self)
 
-    def setForceGroup(self, group):
-        return _openmmjax.JaxForce_setForceGroup(self, group)
-
-    def getForceGroup(self):
-        return _openmmjax.JaxForce_getForceGroup(self)
-
     def addToSystem(self, system):
         return _openmmjax.JaxForce_addToSystem(self, system)
 
@@ -119,16 +280,50 @@ class JaxForce(openmm.openmm.Force):
 
 # Register JaxForce in _openmmjax:
 _openmmjax.JaxForce_swigregister(JaxForce)
+class PythonJaxForce(openmm.openmm.Force):
+    thisown = property(lambda x: x.this.own(), lambda x, v: x.this.own(v), doc="The membership flag")
+    __repr__ = _swig_repr
+    __swig_destroy__ = _openmmjax.delete_PythonJaxForce
+
+    def getGlobalParameters(self):
+        return _openmmjax.PythonJaxForce_getGlobalParameters(self)
+
+    def setUsesPeriodicBoundaryConditions(self, periodic):
+        return _openmmjax.PythonJaxForce_setUsesPeriodicBoundaryConditions(self, periodic)
+
+    def usesPeriodicBoundaryConditions(self):
+        return _openmmjax.PythonJaxForce_usesPeriodicBoundaryConditions(self)
+
+    @staticmethod
+    def cast(force):
+        return _openmmjax.PythonJaxForce_cast(force)
+
+    @staticmethod
+    def isinstance(force):
+        return _openmmjax.PythonJaxForce_isinstance(force)
+
+    def addToSystem(self, system):
+        return _openmmjax.PythonJaxForce_addToSystem(self, system)
+
+    def __init__(self, *args):
+        _openmmjax.PythonJaxForce_swiginit(self, _openmmjax.new_PythonJaxForce(*args))
+
+# Register PythonJaxForce in _openmmjax:
+_openmmjax.PythonJaxForce_swigregister(PythonJaxForce)
 
 
-_JaxForce_addToSystem = JaxForce.addToSystem
+def _disown_after_add_to_system(cls):
+    original = cls.addToSystem
 
-def _jax_force_add_to_system(self, system):
-    index = _JaxForce_addToSystem(self, system)
-    self.thisown = False
-    return index
+    def add_to_system(self, system):
+        index = original(self, system)
+        self.thisown = False
+        return index
 
-JaxForce.addToSystem = _jax_force_add_to_system
+    cls.addToSystem = add_to_system
+
+_disown_after_add_to_system(JaxForce)
+_disown_after_add_to_system(PythonJaxForce)
 
 
 
