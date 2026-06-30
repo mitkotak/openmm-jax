@@ -14,7 +14,6 @@ extern "C" void registerKernelFactories() {
     try {
         Platform& platform = Platform::getPlatformByName("CUDA");
         platform.registerKernelFactory(CalcJaxForceKernel::Name(), new CudaJaxKernelFactory());
-        platform.registerKernelFactory(CalcPythonJaxForceKernel::Name(), new CudaJaxKernelFactory());
     }
     catch (std::exception& ex) {
         // Ignore
@@ -35,8 +34,6 @@ KernelImpl* CudaJaxKernelFactory::createKernelImpl(string name, const Platform& 
     CudaContext& cu = *static_cast<CudaPlatform::PlatformData*>(context.getPlatformData())->contexts[0];
     if (name == CalcJaxForceKernel::Name())
         return new CudaCalcJaxForceKernel(name, platform, cu);
-    if (name == CalcPythonJaxForceKernel::Name())
-        return new CudaCalcPythonJaxForceKernel(name, platform, cu);
     std::string ex_msg = "Tried to create kernel with illegal kernel name '"+name+"'";
     throw OpenMMException(ex_msg);
 }

@@ -19,60 +19,28 @@ from openmmml.mlpotential import MLPotential
 INPUT_PDB = Path(__file__).with_name("phenol.pdb")
 PHENOL_SMILES = "c1ccccc1O"
 SMALL_MOLECULE_FORCEFIELD = "gaff-2.2.20"
-CASES = ("aceff-jax-1.1-pythonjaxforce", "aceff-jax-1.1-python", "aceff-jax-1.1", "mm",)
+CASES = ("aimnet2-jax", "mm",)
 CASE_LABELS = {
     "mm": "GAFF/TIP3P",
     "ani2x-jax-model0": "ANI2x-JAX model0 (JaxForce)",
     "ani2x-jax-ensemble": "ANI2x-JAX ensemble (JaxForce)",
-    "ani2x-jax-model0-python": "ANI2x-JAX model0 (PythonForce)",
-    "ani2x-jax-ensemble-python": "ANI2x-JAX ensemble (PythonForce)",
-    "ani2x-jax-model0-pythonjaxforce": "ANI2x-JAX model0 (PythonJaxForce)",
-    "ani2x-jax-ensemble-pythonjaxforce": "ANI2x-JAX ensemble (PythonJaxForce)",
     "fennix-bio1-small": "FeNNix-S (JaxForce)",
-    "fennix-bio1-small-python": "FeNNix-S (PythonForce)",
-    "fennix-bio1-small-pythonjaxforce": "FeNNix-S (PythonJaxForce)",
     "mace-jax-off-s-23": "MACE-OFF-S(23) (JaxForce)",
     "mace-jax-off-m-24": "MACE-OFF-M(24) (JaxForce)",
-    "mace-jax-off-s-23-python": "MACE-OFF-S(23) (PythonForce)",
-    "mace-jax-off-m-24-python": "MACE-OFF-M(24) (PythonForce)",
-    "mace-jax-off-s-23-pythonjaxforce": "MACE-OFF-S(23) (PythonJaxForce)",
-    "mace-jax-off-m-24-pythonjaxforce": "MACE-OFF-M(24) (PythonJaxForce)",
     "aimnet2-jax": "AIMNet2-JAX (JaxForce)",
-    "aimnet2-jax-python": "AIMNet2-JAX (PythonForce)",
-    "aimnet2-jax-pythonjaxforce": "AIMNet2-JAX (PythonJaxForce)",
     "aceff-jax-1.1": "AceFF-JAX-1.1 (JaxForce)",
-    "aceff-jax-1.1-python": "AceFF-JAX-1.1 (PythonForce)",
-    "aceff-jax-1.1-pythonjaxforce": "AceFF-JAX-1.1 (PythonJaxForce)",
     "aceff-jax-2.0": "AceFF-JAX-2.0 (JaxForce)",
-    "aceff-jax-2.0-python": "AceFF-JAX-2.0 (PythonForce)",
-    "aceff-jax-2.0-pythonjaxforce": "AceFF-JAX-2.0 (PythonJaxForce)",
 }
 CASE_COLORS = {
     "GAFF/TIP3P": "#3d64c8",
     "ANI2x-JAX model0 (JaxForce)": "#c44e52",
     "ANI2x-JAX ensemble (JaxForce)": "#55a868",
-    "ANI2x-JAX model0 (PythonForce)": "#8172b3",
-    "ANI2x-JAX ensemble (PythonForce)": "#ccb974",
-    "ANI2x-JAX model0 (PythonJaxForce)": "#64b5cd",
-    "ANI2x-JAX ensemble (PythonJaxForce)": "#dd8452",
     "FeNNix-S (JaxForce)": "#f05a9d",
-    "FeNNix-S (PythonForce)": "#f5a623",
-    "FeNNix-S (PythonJaxForce)": "#64b5cd",
     "MACE-OFF-S(23) (JaxForce)": "#7a52cc",
     "MACE-OFF-M(24) (JaxForce)": "#00bfa5",
-    "MACE-OFF-S(23) (PythonForce)": "#8172b3",
-    "MACE-OFF-M(24) (PythonForce)": "#ccb974",
-    "MACE-OFF-S(23) (PythonJaxForce)": "#64b5cd",
-    "MACE-OFF-M(24) (PythonJaxForce)": "#dd8452",
     "AIMNet2-JAX (JaxForce)": "#7a52cc",
-    "AIMNet2-JAX (PythonForce)": "#00bfa5",
-    "AIMNet2-JAX (PythonJaxForce)": "#64b5cd",
     "AceFF-JAX-1.1 (JaxForce)": "#c44e52",
-    "AceFF-JAX-1.1 (PythonForce)": "#55a868",
-    "AceFF-JAX-1.1 (PythonJaxForce)": "#64b5cd",
     "AceFF-JAX-2.0 (JaxForce)": "#7a52cc",
-    "AceFF-JAX-2.0 (PythonForce)": "#00bfa5",
-    "AceFF-JAX-2.0 (PythonJaxForce)": "#dd8452",
 }
 PLATFORM = "CUDA"
 TEMP_K = 300.0
@@ -95,6 +63,21 @@ SEED = 2026042141
 EQUIL_STEPS = int(round(EQUIL_PS * 1000.0 / EQUIL_TIMESTEP_FS))
 PRODUCTION_STEPS = int(round(PRODUCTION_PS * 1000.0 / PRODUCTION_TIMESTEP_FS))
 RDF_DISCARD_STEPS = int(round(RDF_DISCARD_PS * 1000.0 / PRODUCTION_TIMESTEP_FS))
+
+
+def import_model_module(model_name: str) -> None:
+    if model_name.startswith("ani2x-jax-"):
+        importlib.import_module("openmmjax_models.anipotential")
+    elif model_name == "fennix-bio1-small":
+        importlib.import_module("openmmjax_models.fennixpotential")
+    elif model_name.startswith("mace-jax-off-"):
+        importlib.import_module("openmmjax_models.macepotential")
+    elif model_name == "aimnet2-jax":
+        importlib.import_module("openmmjax_models.aimnet2potential")
+    elif model_name.startswith("aceff-"):
+        importlib.import_module("openmmjax_models.aceffpotential")
+    else:
+        raise ValueError(f"unknown RDF case: {model_name}")
 
 
 def create_forcefield(cache_path: Path) -> app.ForceField:
@@ -198,173 +181,17 @@ def run_simulation(
 
     if model_name == "mm":
         system = mm_system
-    elif model_name.startswith("ani2x-jax-") and model_name.endswith("-pythonjaxforce"):
-        importlib.import_module("openmmjax_models.anipotential_pythonjaxforce")
-        cloned = openmm.XmlSerializer.deserialize(openmm.XmlSerializer.serialize(mm_system))
-        system = MLPotential(model_name).createMixedSystem(
-            topology,
-            cloned,
-            ml_atoms,
-            removeConstraints=True,
-            periodic_neighborlist=False,
-            preprocessing_positions=prepared["positions"],
-        )
-    elif model_name.startswith("ani2x-jax-") and model_name.endswith("-python"):
-        importlib.import_module("openmmjax_models.anipotential_pythonforce")
-        cloned = openmm.XmlSerializer.deserialize(openmm.XmlSerializer.serialize(mm_system))
-        system = MLPotential(model_name).createMixedSystem(
-            topology,
-            cloned,
-            ml_atoms,
-            removeConstraints=True,
-            periodic_neighborlist=False,
-            preprocessing_positions=prepared["positions"],
-        )
-    elif model_name.startswith("ani2x-jax-"):
-        importlib.import_module("openmmjax_models.anipotential")
-        cloned = openmm.XmlSerializer.deserialize(openmm.XmlSerializer.serialize(mm_system))
-        system = MLPotential(model_name).createMixedSystem(
-            topology,
-            cloned,
-            ml_atoms,
-            removeConstraints=True,
-            periodic_neighborlist=False,
-            preprocessing_positions=prepared["positions"],
-        )
-    elif model_name == "fennix-bio1-small":
-        importlib.import_module("openmmjax_models.fennixpotential")
-        cloned = openmm.XmlSerializer.deserialize(openmm.XmlSerializer.serialize(mm_system))
-        system = MLPotential("fennix-bio1-small").createMixedSystem(
-            topology,
-            cloned,
-            ml_atoms,
-            removeConstraints=True,
-            periodic_neighborlist=False,
-            preprocessing_positions=prepared["positions"],
-        )
-    elif model_name == "fennix-bio1-small-pythonjaxforce":
-        importlib.import_module("openmmjax_models.fennixpotential_pythonjaxforce")
-        cloned = openmm.XmlSerializer.deserialize(openmm.XmlSerializer.serialize(mm_system))
-        system = MLPotential("fennix-bio1-small-pythonjaxforce").createMixedSystem(
-            topology,
-            cloned,
-            ml_atoms,
-            removeConstraints=True,
-            periodic_neighborlist=False,
-            preprocessing_positions=prepared["positions"],
-        )
-    elif model_name == "fennix-bio1-small-python":
-        importlib.import_module("openmmjax_models.fennixpotential_pythonforce")
-        cloned = openmm.XmlSerializer.deserialize(openmm.XmlSerializer.serialize(mm_system))
-        system = MLPotential("fennix-bio1-small-python").createMixedSystem(
-            topology,
-            cloned,
-            ml_atoms,
-            removeConstraints=True,
-            periodic_neighborlist=False,
-            preprocessing_positions=prepared["positions"],
-        )
-    elif model_name.startswith("mace-jax-off-") and model_name.endswith("-pythonjaxforce"):
-        importlib.import_module("openmmjax_models.macepotential_pythonjaxforce")
-        cloned = openmm.XmlSerializer.deserialize(openmm.XmlSerializer.serialize(mm_system))
-        system = MLPotential(model_name).createMixedSystem(
-            topology,
-            cloned,
-            ml_atoms,
-            removeConstraints=True,
-            periodic_neighborlist=False,
-            preprocessing_positions=prepared["positions"],
-        )
-    elif model_name.startswith("mace-jax-off-") and model_name.endswith("-python"):
-        importlib.import_module("openmmjax_models.macepotential_pythonforce")
-        cloned = openmm.XmlSerializer.deserialize(openmm.XmlSerializer.serialize(mm_system))
-        system = MLPotential(model_name).createMixedSystem(
-            topology,
-            cloned,
-            ml_atoms,
-            removeConstraints=True,
-            periodic_neighborlist=False,
-            preprocessing_positions=prepared["positions"],
-        )
-    elif model_name.startswith("mace-jax-off-"):
-        importlib.import_module("openmmjax_models.macepotential")
-        cloned = openmm.XmlSerializer.deserialize(openmm.XmlSerializer.serialize(mm_system))
-        system = MLPotential(model_name).createMixedSystem(
-            topology,
-            cloned,
-            ml_atoms,
-            removeConstraints=True,
-            periodic_neighborlist=False,
-            preprocessing_positions=prepared["positions"],
-        )
-    elif model_name == "aimnet2-jax":
-        importlib.import_module("openmmjax_models.aimnet2potential")
-        cloned = openmm.XmlSerializer.deserialize(openmm.XmlSerializer.serialize(mm_system))
-        system = MLPotential(model_name).createMixedSystem(
-            topology,
-            cloned,
-            ml_atoms,
-            removeConstraints=True,
-            periodic_neighborlist=False,
-            preprocessing_positions=prepared["positions"],
-        )
-    elif model_name == "aimnet2-jax-pythonjaxforce":
-        importlib.import_module("openmmjax_models.aimnet2potential_pythonjaxforce")
-        cloned = openmm.XmlSerializer.deserialize(openmm.XmlSerializer.serialize(mm_system))
-        system = MLPotential(model_name).createMixedSystem(
-            topology,
-            cloned,
-            ml_atoms,
-            removeConstraints=True,
-            periodic_neighborlist=False,
-            preprocessing_positions=prepared["positions"],
-        )
-    elif model_name == "aimnet2-jax-python":
-        importlib.import_module("openmmjax_models.aimnet2potential_pythonforce")
-        cloned = openmm.XmlSerializer.deserialize(openmm.XmlSerializer.serialize(mm_system))
-        system = MLPotential(model_name).createMixedSystem(
-            topology,
-            cloned,
-            ml_atoms,
-            removeConstraints=True,
-            periodic_neighborlist=False,
-            preprocessing_positions=prepared["positions"],
-        ) 
-    elif model_name.startswith("aceff-") and model_name.endswith("-pythonjaxforce"):
-        importlib.import_module("openmmjax_models.aceffpotential_pythonjaxforce")
-        cloned = openmm.XmlSerializer.deserialize(openmm.XmlSerializer.serialize(mm_system))
-        system = MLPotential(model_name).createMixedSystem(
-            topology,
-            cloned,
-            ml_atoms,
-            removeConstraints=True,
-            periodic_neighborlist=False,
-            preprocessing_positions=prepared["positions"],
-        )
-    elif model_name.startswith("aceff-") and model_name.endswith("-python"):
-        importlib.import_module("openmmjax_models.aceffpotential_pythonforce")
-        cloned = openmm.XmlSerializer.deserialize(openmm.XmlSerializer.serialize(mm_system))
-        system = MLPotential(model_name).createMixedSystem(
-            topology,
-            cloned,
-            ml_atoms,
-            removeConstraints=True,
-            periodic_neighborlist=False,
-            preprocessing_positions=prepared["positions"],
-        )
-    elif model_name.startswith("aceff-") and not model_name.endswith("-python"):
-        importlib.import_module("openmmjax_models.aceffpotential")
-        cloned = openmm.XmlSerializer.deserialize(openmm.XmlSerializer.serialize(mm_system))
-        system = MLPotential(model_name).createMixedSystem(
-            topology,
-            cloned,
-            ml_atoms,
-            removeConstraints=True,
-            periodic_neighborlist=False,
-            preprocessing_positions=prepared["positions"],
-        )
     else:
-        raise ValueError(f"unknown RDF case: {model_name}")
+        import_model_module(model_name)
+        cloned = openmm.XmlSerializer.deserialize(openmm.XmlSerializer.serialize(mm_system))
+        system = MLPotential(model_name).createMixedSystem(
+            topology,
+            cloned,
+            ml_atoms,
+            removeConstraints=True,
+            periodic_neighborlist=False,
+            preprocessing_positions=prepared["positions"],
+        )
 
     platform = openmm.Platform.getPlatformByName(PLATFORM)
     props = {"Precision": "mixed"} if PLATFORM == "CUDA" else {}

@@ -12,8 +12,6 @@ ADD_CUSTOM_COMMAND(
     DEPENDS
         "${CMAKE_SOURCE_DIR}/python/openmmjax.i"
         "${CMAKE_SOURCE_DIR}/openmmapi/include/JaxForce.h"
-        "${CMAKE_SOURCE_DIR}/openmmapi/include/PythonJaxForce.h"
-        "${CMAKE_SOURCE_DIR}/openmmapi/include/internal/DLPackTypes.h"
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/python"
 )
 

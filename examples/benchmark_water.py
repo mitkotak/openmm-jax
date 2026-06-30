@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import math
 import time
 from pathlib import Path
 
@@ -9,7 +10,7 @@ from openmm import (
     Platform,
     unit,
 )
-from openmm.app import PDBFile, Simulation
+from openmm.app import ForceField, HBonds, NoCutoff, PDBFile, PME, Simulation
 from openmmml.mlpotential import MLPotential
 
 WATER_DIR = Path(__file__).with_name("water")
@@ -28,65 +29,35 @@ WATER_PDBS = {
     21384: "water_5.9803nm_atoms_21384.pdb",
     98880: "water_9.9631nm_atoms_98880.pdb",
 }
-# CASES = (
-#     "mace-jax-off-s-23",
-#     "mace-jax-off-s-23-python",
-#     "mace-jax-off-m-24",
-#     "mace-jax-off-m-24-python",
-# )
-# CASES = ("fennix-bio1-small-python", "fennix-bio1-small")
-# CASES = ("ani2x-jax-model0", "ani2x-jax-model0-python", "ani2x-jax-model0-pythonjaxforce")
-# CASES = ("aimnet2-jax", "aimnet2-jax-python")
-# CASES = ("aceff-jax-1.1-python", "aceff-jax-1.1")
-# CASES = ("so3lr", "so3lr-python")
 CASES = (
-    "ani2x-jax-model0", "ani2x-jax-model0-python", "ani2x-jax-model0-pythonjaxforce",
-    "aimnet2-jax", "aimnet2-jax-python", "aimnet2-jax-pythonjaxforce",
-    "aceff-jax-1.1", "aceff-jax-1.1-python", "aceff-jax-1.1-pythonjaxforce",
-    "aceff-jax-2.0", "aceff-jax-2.0-python", "aceff-jax-2.0-pythonjaxforce",
-    "mace-jax-off-s-23", "mace-jax-off-s-23-python", "mace-jax-off-s-23-pythonjaxforce",
-    "fennix-bio1-small", "fennix-bio1-small-python", "fennix-bio1-small-pythonjaxforce",
-    "so3lr", "so3lr-python", "so3lr-pythonjaxforce",
+    "amber14-tip3p-pme",
+    "ani2x-jax-model0",
+    "aimnet2-jax",
+    "aceff-jax-1.1",
+    "aceff-jax-2.0",
+    "mace-jax-off-s-23",
+    "so3lr",
     "orb-jax-v3-conservative-omol",
-    "orb-jax-v3-conservative-omol-python",
-    "orb-jax-v3-conservative-omol-pythonjaxforce",
 )
 
 CASE_LABELS = {
+    "amber14-tip3p-pme": "AMBER14 TIP3P PME",
     "fennix-bio1-small": "FeNNix-S (JaxForce)",
-    "fennix-bio1-small-python": "FeNNiX-S (PythonForce)",
-    "fennix-bio1-small-pythonjaxforce": "FeNNiX-S (PythonJaxForce)",
     "ani2x-jax-model0": "ANI2x-JAX model0 (JaxForce)",
     "ani2x-jax-ensemble": "ANI2x-JAX ensemble (JaxForce)",
-    "ani2x-jax-model0-python": "ANI2x-JAX model0 (PythonForce)",
-    "ani2x-jax-ensemble-python": "ANI2x-JAX ensemble (PythonForce)",
-    "ani2x-jax-model0-pythonjaxforce": "ANI2x-JAX model0 (PythonJaxForce)",
-    "ani2x-jax-ensemble-pythonjaxforce": "ANI2x-JAX ensemble (PythonJaxForce)",
     "aimnet2-jax": "AIMNet2-JAX (JaxForce)",
-    "aimnet2-jax-python": "AIMNet2-JAX (PythonForce)",
-    "aimnet2-jax-pythonjaxforce": "AIMNet2-JAX (PythonJaxForce)",
     "mace-jax-off-s-23": "MACE-JAX-OFF-S(23) (JaxForce)",
     "mace-jax-off-m-24": "MACE-JAX-OFF-M(24) (JaxForce)",
-    "mace-jax-off-s-23-python": "MACE-JAX-OFF-S(23) (PythonForce)",
-    "mace-jax-off-m-24-python": "MACE-JAX-OFF-M(24) (PythonForce)",
-    "mace-jax-off-s-23-pythonjaxforce": "MACE-JAX-OFF-S(23) (PythonJaxForce)",
-    "mace-jax-off-m-24-pythonjaxforce": "MACE-JAX-OFF-M(24) (PythonJaxForce)",
     "aceff-jax-1.1": "AceFF-JAX-1.1 (JaxForce)",
-    "aceff-jax-1.1-python": "AceFF-JAX-1.1 (PythonForce)",
     "aceff-jax-2.0": "AceFF-JAX-2.0 (JaxForce)",
-    "aceff-jax-2.0-python": "AceFF-JAX-2.0 (PythonForce)",
-    "aceff-jax-1.1-pythonjaxforce": "AceFF-JAX-1.1 (PythonJaxForce)",
-    "aceff-jax-2.0-pythonjaxforce": "AceFF-JAX-2.0 (PythonJaxForce)",
     "so3lr": "SO3LR (JaxForce)",
-    "so3lr-python": "SO3LR (PythonForce)",
-    "so3lr-pythonjaxforce": "SO3LR (PythonJaxForce)",
     "orb-jax-v3-conservative-omol": "ORB-v3 Conservative OMOL (JaxForce)",
-    "orb-jax-v3-conservative-omol-python": "ORB-v3 Conservative OMOL (PythonForce)",
-    "orb-jax-v3-conservative-omol-pythonjaxforce": "ORB-v3 Conservative OMOL (PythonJaxForce)",
 }
 TEMP_K = 400.0
 FRICTION_PER_PS = 1.0
 TIMESTEP_PS = 0.001
+NONBONDED_CUTOFF_NM = 1.0
+EWALD_TOL = 5.0e-4
 
 # Need to skip minimization since it triggers energy+force call which goes OOM on RTX
 MINIMIZE_STEPS = 0
@@ -97,54 +68,56 @@ WARMUP_STEPS = 10
 PRODUCTION_STEPS = 100
 
 
-def setup_simulation(model_name: str, size: int) -> tuple[Simulation, dict[str, object]]:
-    pdb = PDBFile(str(WATER_DIR / WATER_PDBS[size]))
-    topology = pdb.topology
+def import_model_module(model_name: str) -> None:
     if model_name == "fennix-bio1-small":
         importlib.import_module("openmmjax_models.fennixpotential")
-    elif model_name == "fennix-bio1-small-pythonjaxforce":
-        importlib.import_module("openmmjax_models.fennixpotential_pythonjaxforce")
-    elif model_name == "fennix-bio1-small-python":
-        importlib.import_module("openmmjax_models.fennixpotential_pythonforce")
-    elif model_name.startswith("ani2x-jax-") and model_name.endswith("-pythonjaxforce"):
-        importlib.import_module("openmmjax_models.anipotential_pythonjaxforce")
-    elif model_name.startswith("ani2x-jax-") and model_name.endswith("-python"):
-        importlib.import_module("openmmjax_models.anipotential_pythonforce")
     elif model_name.startswith("ani2x-jax"):
         importlib.import_module("openmmjax_models.anipotential")
     elif model_name == "aimnet2-jax":
         importlib.import_module("openmmjax_models.aimnet2potential")
-    elif model_name == "aimnet2-jax-pythonjaxforce":
-        importlib.import_module("openmmjax_models.aimnet2potential_pythonjaxforce")
-    elif model_name == "aimnet2-jax-python":
-        importlib.import_module("openmmjax_models.aimnet2potential_pythonforce")
-    elif model_name.startswith("mace-jax-off-") and model_name.endswith("-pythonjaxforce"):
-        importlib.import_module("openmmjax_models.macepotential_pythonjaxforce")
-    elif model_name.startswith("mace-jax-off-") and not model_name.endswith("-python"):
+    elif model_name.startswith("mace-jax-off-"):
         importlib.import_module("openmmjax_models.macepotential")
-    elif model_name.startswith("mace-jax-off-") and model_name.endswith("-python"):
-        importlib.import_module("openmmjax_models.macepotential_pythonforce")
-    elif model_name.startswith("aceff-") and model_name.endswith("-pythonjaxforce"):
-        importlib.import_module("openmmjax_models.aceffpotential_pythonjaxforce")
-    elif model_name.startswith("aceff-") and model_name.endswith("-python"):
-        importlib.import_module("openmmjax_models.aceffpotential_pythonforce")
     elif model_name.startswith("aceff-"):
         importlib.import_module("openmmjax_models.aceffpotential")
     elif model_name == "so3lr":
         importlib.import_module("openmmjax_models.so3lrpotential")
-    elif model_name == "so3lr-pythonjaxforce":
-        importlib.import_module("openmmjax_models.so3lrpotential_pythonjaxforce")
-    elif model_name == "so3lr-python":
-        importlib.import_module("openmmjax_models.so3lrpotential_pythonforce")
     elif model_name == "orb-jax-v3-conservative-omol":
         importlib.import_module("openmmjax_models.orbpotential")
-    elif model_name == "orb-jax-v3-conservative-omol-pythonjaxforce":
-        importlib.import_module("openmmjax_models.orbpotential_pythonjaxforce")
-    elif model_name == "orb-jax-v3-conservative-omol-python":
-        importlib.import_module("openmmjax_models.orbpotential_pythonforce")
     else:
         raise ValueError(f"unknown benchmark case: {model_name}")
-    system = MLPotential(model_name).createSystem(
+
+
+def create_amber14_tip3p_system(topology):
+    forcefield = ForceField("amber14/tip3p.xml")
+    forcefield_kwargs = {
+        "constraints": HBonds,
+        "rigidWater": True,
+        "ewaldErrorTolerance": EWALD_TOL,
+        "removeCMMotion": False,
+    }
+    if topology.getPeriodicBoxVectors() is None:
+        forcefield_kwargs["nonbondedMethod"] = NoCutoff
+    else:
+        forcefield_kwargs["nonbondedMethod"] = PME
+        box_lengths = []
+        for vector in topology.getPeriodicBoxVectors():
+            vec = vector.value_in_unit(unit.nanometer)
+            box_lengths.append(math.sqrt(vec.x * vec.x + vec.y * vec.y + vec.z * vec.z))
+        forcefield_kwargs["nonbondedCutoff"] = (
+            min(NONBONDED_CUTOFF_NM, 0.49 * min(box_lengths)) * unit.nanometer
+        )
+    return forcefield.createSystem(topology, **forcefield_kwargs)
+
+
+def setup_simulation(model_name: str, size: int) -> Simulation:
+    pdb = PDBFile(str(WATER_DIR / WATER_PDBS[size]))
+    topology = pdb.topology
+    if model_name == "amber14-tip3p-pme":
+        system = create_amber14_tip3p_system(topology)
+    else:
+        import_model_module(model_name)
+    if model_name != "amber14-tip3p-pme":
+        system = MLPotential(model_name).createSystem(
             topology,
             removeCMMotion=False,
             periodic_neighborlist=False,
