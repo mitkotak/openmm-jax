@@ -49,7 +49,7 @@ def get_neighbors(
         jax_box = jnp.swapaxes(jnp.asarray(box, dtype=positions.dtype), -1, -2)
         displacement, _ = space.periodic_general(
             jax_box,
-            fractional_coordinates=True,
+            fractional_coordinates=False,
         )
         neighbor_kwargs = {"box": jax_box}
     else:
@@ -57,7 +57,7 @@ def get_neighbors(
         neighbor_kwargs = {}
 
     if neighbors is not None:
-        neighbors = neighbors.update(positions, **neighbor_kwargs)
+        neighbors = neighbors.update(positions)
     else:
         neighbor_fn = partition.neighbor_list(
             displacement,
@@ -67,7 +67,7 @@ def get_neighbors(
             capacity_multiplier=float(cell_capacity_multiplier),
             disable_cell_list=not use_cell_list,
             mask_self=True,
-            fractional_coordinates=periodic,
+            fractional_coordinates=False,
             format=partition.NeighborListFormat.Dense,
         )
         neighbors = neighbor_fn.allocate(
@@ -96,7 +96,7 @@ def dense_neighbor_edges(
     else:
         displacement, _ = space.periodic_general(
             jnp.swapaxes(jnp.asarray(box_vectors, dtype=positions.dtype), -1, -2),
-            fractional_coordinates=True,
+            fractional_coordinates=False,
         )
         edge_vectors = space.map_neighbor(displacement)(positions, neighbor_positions)
 

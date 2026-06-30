@@ -8,7 +8,6 @@ import jax.numpy as jnp
 import openmm
 import openmm.app as app
 import openmmjax
-from jax_md import space
 from openmm import unit
 from openmmjax_export import (
     configure_pjrt_plugin,
@@ -95,11 +94,6 @@ class SO3LRPotentialImpl(MLPotentialImpl):
             allocation_positions = allocation_positions[jnp.asarray(atoms, dtype=jnp.int32)]
 
         def _allocate_neighbor_lists(box_vectors_angstrom, positions_angstrom):
-            if force_periodic:
-                positions_angstrom = fractional_coordinates(
-                    positions_angstrom,
-                    box_vectors_angstrom,
-                )
             neighbors = get_sparse_neighbors(
                 positions_angstrom,
                 box_vectors_angstrom,
@@ -175,28 +169,6 @@ for model_name in SO3LR_MODEL_NAMES:
     MLPotential.registerImplFactory(model_name, SO3LRPotentialImplFactory())
 
 
-def fractional_coordinates(positions, box_vectors):
-    jax_box = jnp.swapaxes(jnp.asarray(box_vectors, dtype=positions.dtype), -1, -2)
-    return space.transform(_restricted_box_inverse(jax_box), positions)
-
-
-def _restricted_box_inverse(box):
-    a = box[0, 0]
-    b = box[0, 1]
-    c = box[0, 2]
-    d = box[1, 1]
-    e = box[1, 2]
-    f = box[2, 2]
-    return jnp.array(
-        [
-            [1.0 / a, -b / (a * d), (b * e - c * d) / (a * d * f)],
-            [0.0, 1.0 / d, -e / (d * f)],
-            [0.0, 0.0, 1.0 / f],
-        ],
-        dtype=box.dtype,
-    )
-
-
 def _energySO3LR(
     state,
     model,
@@ -211,8 +183,6 @@ def _energySO3LR(
     box_vectors = None
     if pbc and box_vectors_nm is not None:
         box_vectors = box_vectors_nm * unit.nanometer.conversion_factor_to(unit.angstrom)
-        positions = fractional_coordinates(positions, box_vectors)
-        positions = positions - jnp.floor(positions)
     energy = model(
         positions,
         species,

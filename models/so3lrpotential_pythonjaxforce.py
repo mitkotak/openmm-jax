@@ -6,7 +6,6 @@ import jax
 import jax.numpy as jnp
 import openmm
 import openmm.app as app
-from jax_md import space
 from openmm import unit
 from openmmjax import PythonJaxForce
 from openmmml.mlpotential import MLPotential, MLPotentialImpl, MLPotentialImplFactory
@@ -152,10 +151,8 @@ def allocate_neighbor_list(
     cell_capacity_multiplier: float,
     periodic: bool,
 ):
-    if periodic:
-        if box_vectors_angstrom is None:
-            raise ValueError("periodic neighbor-list allocation requires a box.")
-        positions_angstrom = fractional_coordinates(positions_angstrom, box_vectors_angstrom)
+    if periodic and box_vectors_angstrom is None:
+        raise ValueError("periodic neighbor-list allocation requires a box.")
     return get_sparse_neighbors(
         positions_angstrom,
         box_vectors_angstrom,
@@ -180,7 +177,6 @@ def _energySO3LR(
     box_vectors = None
     if periodic:
         box_vectors = box_vectors_nm * unit.nanometer.conversion_factor_to(unit.angstrom)
-        positions = _fractional_positions(positions, box_vectors)
     energy = model(
         positions,
         species,
@@ -192,32 +188,6 @@ def _energySO3LR(
     )
     return energy * model.ev_to_kjmol
 
-
-def _fractional_positions(positions, box_vectors):
-    fractional = fractional_coordinates(positions, box_vectors)
-    return fractional - jnp.floor(fractional)
-
-
-def fractional_coordinates(positions, box_vectors):
-    openmm_box = jnp.swapaxes(jnp.asarray(box_vectors, dtype=positions.dtype), -1, -2)
-    return space.transform(_restricted_box_inverse(openmm_box), positions)
-
-
-def _restricted_box_inverse(box):
-    a = box[0, 0]
-    b = box[0, 1]
-    c = box[0, 2]
-    d = box[1, 1]
-    e = box[1, 2]
-    f = box[2, 2]
-    return jnp.array(
-        (
-            (1.0 / a, -b / (a * d), (b * e - c * d) / (a * d * f)),
-            (0.0, 1.0 / d, -e / (d * f)),
-            (0.0, 0.0, 1.0 / f),
-        ),
-        dtype=box.dtype,
-    )
 
 
 class _ComputeSO3LRPythonJaxForce:

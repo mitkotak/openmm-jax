@@ -40,7 +40,7 @@ def _neighbor_displacement(positions, box=None, *, periodic: bool):
     jax_box = jnp.swapaxes(jnp.asarray(box, dtype=positions.dtype), -1, -2)
     displacement, _ = space.periodic_general(
         jax_box,
-        fractional_coordinates=True,
+        fractional_coordinates=False,
     )
     return displacement, {"box": jax_box}
 
@@ -64,7 +64,7 @@ def get_sparse_neighbors(
     )
 
     if neighbors is not None:
-        return neighbors.update(positions, **neighbor_kwargs)
+        return neighbors.update(positions)
 
     neighbor_fn = partition.neighbor_list(
         displacement,
@@ -74,7 +74,7 @@ def get_sparse_neighbors(
         capacity_multiplier=float(cell_capacity_multiplier),
         disable_cell_list=not use_cell_list,
         mask_self=True,
-        fractional_coordinates=periodic,
+        fractional_coordinates=False,
         format=partition.NeighborListFormat.Sparse,
     )
     return neighbor_fn.allocate(
