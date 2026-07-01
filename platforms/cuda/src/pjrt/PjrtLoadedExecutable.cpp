@@ -65,15 +65,20 @@ PjrtLoadedExecutablePtr JaxPlugin::compileStablehloExecutable(PjrtClientSession&
     return PjrtLoadedExecutablePtr(compileArgs.executable, makeLoadedExecutableDeleter(api));
 }
 
-PjrtEventPtr JaxPlugin::executeLoadedExecutable(PjrtClientSession& session,
-        PJRT_LoadedExecutable* executable, PjrtBufferPtr* inputs,
-        size_t numInputs, int deviceIndex, PjrtBufferPtr* outputs,
-        size_t numOutputs, const string& label, const string& callLocation) {
+PjrtOutputBuffers JaxPlugin::executeLoadedExecutable(PjrtClientSession& session,
+        const SelectedPjrtProgram& program, PjrtInputBuffers& inputs,
+        int deviceIndex) {
     const PJRT_Api* api = session.api();
+    if (program.executable == nullptr)
+        throw runtime_error("JaxForce PJRT: selected program has no executable");
+    if (inputs.count > inputs.buffers.size())
+        throw runtime_error("JaxForce PJRT: too many input buffers");
+    if (program.outputCount > 2)
+        throw runtime_error("JaxForce PJRT: too many output buffers for " + string(program.label));
 
     std::array<PJRT_Buffer*, 2> inputPtrs = {nullptr, nullptr};
-    for (size_t i = 0; i < numInputs; i++)
-        inputPtrs[i] = inputs[i].get();
+    for (size_t i = 0; i < inputs.count; i++)
+        inputPtrs[i] = inputs.buffers[i].get();
 
     PJRT_Buffer* const* argumentLists[1] = {inputPtrs.data()};
     std::array<PJRT_Buffer*, 2> outputList = {nullptr, nullptr};
@@ -81,7 +86,7 @@ PjrtEventPtr JaxPlugin::executeLoadedExecutable(PjrtClientSession& session,
     std::array<PJRT_Event*, 1> events = {nullptr};
 
     int64_t nonDonatable[2] = {0, 0};
-    for (size_t i = 0; i < numInputs; i++)
+    for (size_t i = 0; i < inputs.count; i++)
         nonDonatable[i] = static_cast<int64_t>(i);
 
     PJRT_ExecuteOptions options;
@@ -93,9 +98,9 @@ PjrtEventPtr JaxPlugin::executeLoadedExecutable(PjrtClientSession& session,
     options.num_recv_ops = 0;
     options.launch_id = 0;
     options.non_donatable_input_indices = nonDonatable;
-    options.num_non_donatable_input_indices = numInputs;
+    options.num_non_donatable_input_indices = inputs.count;
     options.context = nullptr;
-    options.call_location = callLocation.c_str();
+    options.call_location = program.label;
     options.num_tasks = 0;
     options.task_ids = nullptr;
     options.incarnation_ids = nullptr;
@@ -104,11 +109,11 @@ PjrtEventPtr JaxPlugin::executeLoadedExecutable(PjrtClientSession& session,
     PJRT_LoadedExecutable_Execute_Args executeArgs;
     executeArgs.struct_size = PJRT_LoadedExecutable_Execute_Args_STRUCT_SIZE;
     executeArgs.extension_start = nullptr;
-    executeArgs.executable = executable;
+    executeArgs.executable = program.executable;
     executeArgs.options = &options;
     executeArgs.argument_lists = argumentLists;
     executeArgs.num_devices = 1;
-    executeArgs.num_args = numInputs;
+    executeArgs.num_args = inputs.count;
     executeArgs.output_lists = outputLists;
     executeArgs.device_complete_events = events.data();
     executeArgs.execute_device = session.device(deviceIndex);
@@ -116,17 +121,19 @@ PjrtEventPtr JaxPlugin::executeLoadedExecutable(PjrtClientSession& session,
     PjrtErrorPtr executeError(api->PJRT_LoadedExecutable_Execute(&executeArgs),
             makeErrorDeleter(api));
     session.pluginLibrary().checkError(executeError.release(),
-            "PJRT_LoadedExecutable_Execute(" + label + ")");
+            "PJRT_LoadedExecutable_Execute(" + string(program.label) + ")");
 
-    for (size_t i = 0; i < numOutputs; i++) {
+    PjrtOutputBuffers result;
+    for (size_t i = 0; i < program.outputCount; i++) {
         if (outputList[i] != nullptr)
-            outputs[i] = PjrtBufferPtr(outputList[i], makeBufferDeleter(api));
+            result.buffers[i] = PjrtBufferPtr(outputList[i], makeBufferDeleter(api));
     }
-    for (size_t i = 0; i < numOutputs; i++)
-        if (outputs[i] == nullptr)
-            throw runtime_error("JaxForce PJRT: execute returned null output for " + label);
+    for (size_t i = 0; i < program.outputCount; i++)
+        if (result.buffers[i] == nullptr)
+            throw runtime_error("JaxForce PJRT: execute returned null output for " + string(program.label));
 
-    return PjrtEventPtr(events[0], makeEventDeleter(api));
+    result.completeEvent = PjrtEventPtr(events[0], makeEventDeleter(api));
+    return result;
 }
 
 void JaxPlugin::awaitDeviceCompleteEvent(PjrtClientSession& session,

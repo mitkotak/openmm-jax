@@ -3,6 +3,7 @@
 
 #include "OpenMmPjrtOutputLifetime.h"
 #include "PjrtClientSession.h"
+#include "PjrtExecutionTypes.h"
 #include "PjrtHandles.h"
 #include <cuda.h>
 #include <functional>
@@ -12,12 +13,12 @@ namespace JaxPlugin {
 
 
 struct OpenMmPjrtInputs {
-    CUdeviceptr positions = 0;       
+    CUdeviceptr positions = 0;
     CUdeviceptr boxVectors = 0;
     int numParticles = 0;
-    int deviceIndex = 0;             
-    CUstream stream = nullptr;        
-    bool usePeriodic = false;         
+    int deviceIndex = 0;
+    CUstream stream = nullptr;
+    bool usePeriodic = false;
     CUevent inputReadyEvent = nullptr;
     bool useDoublePrecisionReal = false;
 };
@@ -63,7 +64,13 @@ public:
             bool includeForces, bool includeEnergy);
 
 private:
-    void waitOnStream(CUstream stream, CUevent readyEvent);
+    SelectedPjrtProgram selectProgram(RequestedOutputs outputs) const;
+    void validatePrecision(const OpenMmPjrtInputs& inputs) const;
+    PjrtInputBuffers createInputViews(const OpenMmPjrtInputs& inputs,
+            const SelectedPjrtProgram& program);
+    OpenMmPjrtExecutionResult consumeOutputs(PjrtOutputBuffers outputs,
+            const SelectedPjrtProgram& program,
+            const OpenMmPjrtInputs& inputs);
 
     PjrtClientSession session;
     PjrtLoadedExecutablePtr forceExecutable;

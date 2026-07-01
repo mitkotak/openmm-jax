@@ -1,7 +1,6 @@
 #include "PjrtRuntime.h"
 #include "PjrtBufferInterop.h"
 #include "PjrtLoadedExecutable.h"
-#include <array>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -51,6 +50,23 @@ void checkStablehloPrecisionMatches(const string& label, bool expected, bool act
             "JaxForce PJRT: StableHLO input precision mismatch between programs: " +
             label + " uses " + precisionName(actual) + " positions, but earlier "
             "programs use " + precisionName(expected) + " positions");
+}
+
+RequestedOutputs getRequestedOutputs(bool includeForces, bool includeEnergy) {
+    if (includeForces && includeEnergy)
+        return RequestedOutputs::EnergyAndForces;
+    if (includeForces)
+        return RequestedOutputs::Forces;
+    return RequestedOutputs::Energy;
+}
+
+void makePjrtStreamWaitForOpenMmInputs(CUstream stream, CUevent readyEvent) {
+    if (stream == nullptr || readyEvent == nullptr)
+        return;
+    CUresult result = cuStreamWaitEvent(stream, readyEvent, 0);
+    if (result != CUDA_SUCCESS)
+        throw runtime_error(
+                "JaxForce PJRT: failed to make PJRT input stream wait for OpenMM packed inputs");
 }
 
 } // namespace
@@ -125,35 +141,42 @@ void PjrtRuntime::initialize(const string& pluginPath, const string& forceMlir,
 OpenMmPjrtExecutionResult PjrtRuntime::execute(
         const OpenMmPjrtInputs& pjrtInputs, bool includeForces,
         bool includeEnergy) {
-    OpenMmPjrtExecutionResult result;
     if (!includeForces && !includeEnergy)
-        return result;
+        return {};
 
     outputLifetime.cleanupBeforeExecution();
 
-    struct ExecutableChoice {
-        PJRT_LoadedExecutable* executable = nullptr;
-        size_t numOutputs = 0;
-        int forceOutputIndex = -1;
-        int energyOutputIndex = -1;
-        const char* label = nullptr;
-        const char* callLocation = nullptr;
-    } choice;
-    if (includeForces && includeEnergy)
-        choice = {energyAndForcesExecutable.get(), 2, 1, 0,
-                "energy+forces", "OpenMM-JAX energy+forces"};
-    else if (includeForces)
-        choice = {forceExecutable.get(), 1, 0, -1,
-                "force", "OpenMM-JAX force"};
-    else
-        choice = {energyExecutable.get(), 1, -1, 0,
-                "energy", "OpenMM-JAX energy"};
+    RequestedOutputs requested = getRequestedOutputs(includeForces, includeEnergy);
+    SelectedPjrtProgram program = selectProgram(requested);
 
-    if (pjrtInputs.useDoublePrecisionReal != stablehloUsesDoublePrecisionReal) {
+    validatePrecision(pjrtInputs);
+
+    PjrtInputBuffers inputBuffers = createInputViews(pjrtInputs, program);
+    PjrtOutputBuffers outputBuffers = executeLoadedExecutable(session,
+            program, inputBuffers, pjrtInputs.deviceIndex);
+    awaitDeviceCompleteEvent(session, outputBuffers.completeEvent, program.label);
+
+    return consumeOutputs(std::move(outputBuffers), program, pjrtInputs);
+}
+
+SelectedPjrtProgram PjrtRuntime::selectProgram(RequestedOutputs outputs) const {
+    switch (outputs) {
+        case RequestedOutputs::EnergyAndForces:
+            return {energyAndForcesExecutable.get(), 2, 1, 0, "energy+forces"};
+        case RequestedOutputs::Forces:
+            return {forceExecutable.get(), 1, 0, -1, "force"};
+        case RequestedOutputs::Energy:
+            return {energyExecutable.get(), 1, -1, 0, "energy"};
+    }
+    throw runtime_error("JaxForce PJRT: unknown requested output set");
+}
+
+void PjrtRuntime::validatePrecision(const OpenMmPjrtInputs& inputs) const {
+    if (inputs.useDoublePrecisionReal != stablehloUsesDoublePrecisionReal) {
         stringstream message;
         message << "JaxForce PJRT: OpenMM CUDA context precision does not match "
                 << "the JaxForce StableHLO input precision. OpenMM is providing "
-                << precisionName(pjrtInputs.useDoublePrecisionReal)
+                << precisionName(inputs.useDoublePrecisionReal)
                 << " position buffers, but the JaxForce was exported for "
                 << precisionName(stablehloUsesDoublePrecisionReal)
                 << " position buffers. OpenMM-JAX does not implicitly convert "
@@ -163,74 +186,70 @@ OpenMmPjrtExecutionResult PjrtRuntime::execute(
                 << "Precision=\"mixed\"/\"single\" with an f32 JaxForce).";
         throw runtime_error(message.str());
     }
+}
 
-    CUstream inputStream = session.getStreamForExternalReadyEvents(pjrtInputs.deviceIndex);
-    if (pjrtInputs.inputReadyEvent != nullptr)
-        waitOnStream(inputStream, pjrtInputs.inputReadyEvent);
+PjrtInputBuffers PjrtRuntime::createInputViews(const OpenMmPjrtInputs& inputs,
+        const SelectedPjrtProgram& program) {
+    CUstream inputStream = session.getStreamForExternalReadyEvents(inputs.deviceIndex);
+    makePjrtStreamWaitForOpenMmInputs(inputStream, inputs.inputReadyEvent);
 
-    std::array<PjrtBufferPtr, 2> inputBuffers;
-    size_t numInputs = 0;
-    PJRT_Buffer_Type inputType = pjrtInputs.useDoublePrecisionReal ?
+    PjrtInputBuffers inputBuffers;
+    PJRT_Buffer_Type inputType = inputs.useDoublePrecisionReal ?
             PJRT_Buffer_Type_F64 : PJRT_Buffer_Type_F32;
-    int64_t positionDims[2] = {pjrtInputs.numParticles, 3};
-    inputBuffers[numInputs++] = createViewOfDeviceBuffer(session,
-            pjrtInputs.positions, positionDims, 2,
-            inputType, inputStream, pjrtInputs.deviceIndex,
-            string(choice.label) + " positions");
-    if (pjrtInputs.usePeriodic) {
+    int64_t positionDims[2] = {inputs.numParticles, 3};
+    inputBuffers.push(createViewOfDeviceBuffer(session,
+            inputs.positions, positionDims, 2,
+            inputType, inputStream, inputs.deviceIndex,
+            string(program.label) + " positions"));
+    if (inputs.usePeriodic) {
         int64_t boxDims[2] = {3, 3};
-        inputBuffers[numInputs++] = createViewOfDeviceBuffer(session,
-                pjrtInputs.boxVectors, boxDims, 2,
-                inputType, inputStream, pjrtInputs.deviceIndex,
-                string(choice.label) + " boxVectors");
+        inputBuffers.push(createViewOfDeviceBuffer(session,
+                inputs.boxVectors, boxDims, 2,
+                inputType, inputStream, inputs.deviceIndex,
+                string(program.label) + " boxVectors"));
     }
+    return inputBuffers;
+}
 
-    std::array<PjrtBufferPtr, 2> outputBuffers;
-    PjrtEventPtr completeEvent = executeLoadedExecutable(session,
-            choice.executable, inputBuffers.data(),
-            numInputs, pjrtInputs.deviceIndex, outputBuffers.data(), choice.numOutputs,
-            choice.label, choice.callLocation);
-    awaitDeviceCompleteEvent(session, completeEvent, choice.label);
+OpenMmPjrtExecutionResult PjrtRuntime::consumeOutputs(PjrtOutputBuffers outputs,
+        const SelectedPjrtProgram& program,
+        const OpenMmPjrtInputs& inputs) {
+    OpenMmPjrtExecutionResult result;
 
-    if (choice.energyOutputIndex >= 0) {
-        size_t index = static_cast<size_t>(choice.energyOutputIndex);
+    if (program.energyOutputIndex >= 0) {
+        size_t index = static_cast<size_t>(program.energyOutputIndex);
+        if (index >= program.outputCount)
+            throw runtime_error("JaxForce PJRT: energy output index out of range for " +
+                    string(program.label));
         CUdeviceptr energyPointer = getOpaqueDeviceMemoryDataPointer(session,
-                outputBuffers[index], string(choice.label) + " energy");
+                outputs.buffers[index], string(program.label) + " energy");
         double energyDouble = 0.0;
         float energyFloat = 0.0f;
-        void* energyHost = pjrtInputs.useDoublePrecisionReal ?
+        void* energyHost = inputs.useDoublePrecisionReal ?
                 static_cast<void*>(&energyDouble) : static_cast<void*>(&energyFloat);
-        size_t energySize = pjrtInputs.useDoublePrecisionReal ? sizeof(double) : sizeof(float);
+        size_t energySize = inputs.useDoublePrecisionReal ? sizeof(double) : sizeof(float);
         CUresult copyResult = cuMemcpyDtoHAsync(
-                energyHost, energyPointer, energySize, pjrtInputs.stream);
+                energyHost, energyPointer, energySize, inputs.stream);
         if (copyResult != CUDA_SUCCESS)
             throw runtime_error("JaxForce PJRT: failed to copy energy scalar from device");
-        CUresult syncResult = cuStreamSynchronize(pjrtInputs.stream);
+        CUresult syncResult = cuStreamSynchronize(inputs.stream);
         if (syncResult != CUDA_SUCCESS)
             throw runtime_error("JaxForce PJRT: failed to synchronize energy scalar copy");
-        result.energy = pjrtInputs.useDoublePrecisionReal ?
+        result.energy = inputs.useDoublePrecisionReal ?
                 energyDouble : static_cast<double>(energyFloat);
-        outputBuffers[index].reset();
+        outputs.buffers[index].reset();
     }
 
-    if (choice.forceOutputIndex >= 0) {
-        size_t index = static_cast<size_t>(choice.forceOutputIndex);
+    if (program.forceOutputIndex >= 0) {
+        size_t index = static_cast<size_t>(program.forceOutputIndex);
+        if (index >= program.outputCount)
+            throw runtime_error("JaxForce PJRT: force output index out of range for " +
+                    string(program.label));
         CUdeviceptr forcePointer = getOpaqueDeviceMemoryDataPointer(session,
-                outputBuffers[index], string(choice.label) + " force");
+                outputs.buffers[index], string(program.label) + " force");
         result.forceOutput = OpenMmPjrtForceOutput(&outputLifetime,
-                std::move(outputBuffers[index]), forcePointer);
+                std::move(outputs.buffers[index]), forcePointer);
     }
 
     return result;
-}
-
-// Insert a dependency so that the PJRT input stream waits
-// for the OpenMM event that signals input buffers are fully written.
-void PjrtRuntime::waitOnStream(CUstream stream, CUevent readyEvent) {
-    if (stream != nullptr && readyEvent != nullptr) {
-        CUresult result = cuStreamWaitEvent(stream, readyEvent, 0);
-        if (result != CUDA_SUCCESS)
-            throw runtime_error(
-                    "JaxForce PJRT: failed to make PJRT input stream wait for OpenMM packed inputs");
-    }
 }

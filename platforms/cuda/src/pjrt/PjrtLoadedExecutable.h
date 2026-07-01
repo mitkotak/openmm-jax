@@ -2,6 +2,7 @@
 #define OPENMM_PJRT_LOADED_EXECUTABLE_H_
 
 #include "PjrtClientSession.h"
+#include "PjrtExecutionTypes.h"
 #include "PjrtHandles.h"
 #include <string>
 
@@ -13,11 +14,9 @@ PjrtLoadedExecutablePtr compileStablehloExecutable(PjrtClientSession& session,
         const std::string& mlir, const std::string& compileOptions,
         const std::string& label);
 
-PjrtEventPtr executeLoadedExecutable(PjrtClientSession& session,
-        PJRT_LoadedExecutable* executable, PjrtBufferPtr* inputs,
-        size_t numInputs, int deviceIndex, PjrtBufferPtr* outputs,
-        size_t numOutputs, const std::string& label,
-        const std::string& callLocation);
+PjrtOutputBuffers executeLoadedExecutable(PjrtClientSession& session,
+        const SelectedPjrtProgram& program, PjrtInputBuffers& inputs,
+        int deviceIndex);
 
 void awaitDeviceCompleteEvent(PjrtClientSession& session, PjrtEventPtr& event,
         const std::string& label);

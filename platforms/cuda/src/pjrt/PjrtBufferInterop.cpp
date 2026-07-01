@@ -15,6 +15,8 @@ PjrtBufferPtr JaxPlugin::createViewOfDeviceBuffer(PjrtClientSession& session,
         const string& label) {
     if (!session.hasDevice(deviceIndex))
         throw runtime_error("JaxForce PJRT: device index out of range for " + label);
+    if (numDims > 3)
+        throw runtime_error("JaxForce PJRT: buffer rank exceeds CUDA interop limit for " + label);
 
     int64_t minorToMajor[3];
     for (size_t i = 0; i < numDims; i++)
