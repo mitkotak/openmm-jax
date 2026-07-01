@@ -1,6 +1,6 @@
 # OpenMM-JAX
 
-[OpenMM](http://openmm.org) plugin for running exported JAX functions through `JaxForce`. For pre-trained machine learning force fields, see [bio-mlff](https://github.com/mitkotak/bio-mlff.git).
+[OpenMM](http://openmm.org) plugin for running exported JAX functions through `JaxForce`. For pre-trained machine learning force field models, see [bio-mlff](https://github.com/mitkotak/bio-mlff.git).
 
 
 ```bash
@@ -16,8 +16,7 @@ import jax.numpy as jnp
 from openmmjax import JaxForce
 from openmmjax_export import configure_pjrt_plugin, export_jax_model
 
-# We use separate functions for energy, forces, energy + forces for efficiency.
-
+# Separate functions for energy, forces, energy + forces for computational efficiency.
 def compute_energy(positions, box_vectors):
     box_size = jnp.diag(box_vectors)
     wrapped = positions - jnp.floor(positions / box_size) * box_size
