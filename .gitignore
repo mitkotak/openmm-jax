@@ -1,4 +1,7 @@
 build/
+dist/
+outputs/
+cmake/
 __pycache__/
 *.py[cod]
 *.so

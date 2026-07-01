@@ -196,7 +196,7 @@ PjrtInputBuffers PjrtRuntime::createInputViews(const OpenMmPjrtInputs& inputs,
     PjrtInputBuffers inputBuffers;
     PJRT_Buffer_Type inputType = inputs.useDoublePrecisionReal ?
             PJRT_Buffer_Type_F64 : PJRT_Buffer_Type_F32;
-    int64_t positionDims[2] = {inputs.numParticles, 3};
+    int64_t positionDims[2] = {inputs.numInputParticles, 3};
     inputBuffers.push(createViewOfDeviceBuffer(session,
             inputs.positions, positionDims, 2,
             inputType, inputStream, inputs.deviceIndex,

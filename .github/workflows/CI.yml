@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+  schedule:
+    - cron: "0 0 * * *"
+
+jobs:
+  source-build:
+    name: Linux source build
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        shell: bash -l {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: conda-incubator/setup-miniconda@v4
+        name: Install dependencies with Mamba
+        with:
+          activate-environment: build
+          environment-file: devtools/conda-envs/build-ubuntu-22.04.yml
+          miniforge-variant: Miniforge3
+          use-mamba: true
+
+      - name: List conda packages
+        run: conda list
+
+      - name: Configure
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="${CONDA_PREFIX}" \
+            -DOPENMM_DIR="${CONDA_PREFIX}"
+
+      - name: Build native plugin
+        run: cmake --build build --target install --parallel 2
+
+      - name: Install Python wrapper
+        run: cmake --build build --target PythonInstall --parallel 2
+
+      - name: Import check
+        run: |
+          python -c "import openmmjax; print(openmmjax.JaxForce)"
+          python -c "import openmm as mm; print('---Loaded---', *mm.pluginLoadedLibNames, '---Failed---', *mm.Platform.getPluginLoadFailures(), sep='\n')"

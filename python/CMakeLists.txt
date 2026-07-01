@@ -1,23 +1,36 @@
-SET(WRAP_CPP "${CMAKE_SOURCE_DIR}/python/JaxPluginWrapper.cpp")
-SET(WRAP_PY "${CMAKE_SOURCE_DIR}/python/openmmjax.py")
+SET(WRAP_CPP "${CMAKE_CURRENT_BINARY_DIR}/JaxPluginWrapper.cpp")
+SET(WRAP_PY "${CMAKE_CURRENT_BINARY_DIR}/openmmjax.py")
+SET(PY_SETUP "${CMAKE_CURRENT_BINARY_DIR}/setup.py")
+SET(PY_EXPORT "${CMAKE_CURRENT_BINARY_DIR}/openmmjax_export.py")
+SET(PY_README "${CMAKE_CURRENT_BINARY_DIR}/README.md")
+SET(PY_LICENSE "${CMAKE_CURRENT_BINARY_DIR}/LICENSE")
 
 ADD_CUSTOM_COMMAND(
     OUTPUT "${WRAP_CPP}" "${WRAP_PY}"
     COMMAND "${SWIG_EXECUTABLE}"
         -python -c++
-        -outdir "${CMAKE_SOURCE_DIR}/python"
+        -outdir "${CMAKE_CURRENT_BINARY_DIR}"
         -o "${WRAP_CPP}"
         "-I${OPENMM_DIR}/include"
         "${CMAKE_SOURCE_DIR}/python/openmmjax.i"
     DEPENDS
         "${CMAKE_SOURCE_DIR}/python/openmmjax.i"
         "${CMAKE_SOURCE_DIR}/openmmapi/include/JaxForce.h"
-    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/python"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
 )
 
 ADD_CUSTOM_TARGET(PythonWrapper DEPENDS "${WRAP_CPP}" "${WRAP_PY}")
-ADD_CUSTOM_TARGET(PythonInstall DEPENDS PythonWrapper
-    COMMAND "${CMAKE_COMMAND}" -E env "OPENMM_DIR=${OPENMM_DIR}"
-        "PIP_REQUIRE_VIRTUALENV=false"
-        "${PYTHON_EXECUTABLE}" -m pip install -e "${CMAKE_SOURCE_DIR}" --no-build-isolation --no-deps
+
+SET(JAX_PLUGIN_HEADER_DIR "${CMAKE_SOURCE_DIR}/openmmapi/include")
+SET(JAX_PLUGIN_LIBRARY_DIR "${CMAKE_BINARY_DIR}")
+CONFIGURE_FILE("${CMAKE_CURRENT_SOURCE_DIR}/setup.py" "${PY_SETUP}" @ONLY)
+CONFIGURE_FILE("${CMAKE_CURRENT_SOURCE_DIR}/openmmjax_export.py" "${PY_EXPORT}" COPYONLY)
+CONFIGURE_FILE("${CMAKE_SOURCE_DIR}/README.md" "${PY_README}" COPYONLY)
+CONFIGURE_FILE("${CMAKE_SOURCE_DIR}/LICENSE" "${PY_LICENSE}" COPYONLY)
+
+ADD_CUSTOM_TARGET(PythonInstall
+    DEPENDS PythonWrapper "${PY_SETUP}" "${PY_EXPORT}" "${PY_README}" "${PY_LICENSE}" "${SHARED_JAX_TARGET}"
+    COMMAND "${CMAKE_COMMAND}" -E env "PIP_REQUIRE_VIRTUALENV=false"
+        "${PYTHON_EXECUTABLE}" -m pip install . --no-build-isolation --no-deps
+    WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
 )

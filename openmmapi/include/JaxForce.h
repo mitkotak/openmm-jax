@@ -3,6 +3,7 @@
 
 #include "openmm/Force.h"
 #include <string>
+#include <vector>
 
 namespace JaxPlugin {
 
@@ -21,19 +22,18 @@ public:
     void setUsesPeriodicBoundaryConditions(bool periodic);
     bool usesPeriodicBoundaryConditions() const;
 
-    /**
-     * Set the output sign convention for the exported array.
-     *
-     * If this is true, the exported array is interpreted as forces and is
-     * accumulated into OpenMM's force buffer as-is. If this is false, the
-     * exported array is interpreted as gradients dE/dx and is negated during
-     * accumulation.
-     */
-    void setOutputsForces(bool outputsForces);
-    bool getOutputsForces() const;
-
     void setPjrtPluginPath(const std::string& path);
     const std::string& getPjrtPluginPath() const;
+
+    /**
+     * Set the particles this force applies to.
+     *
+     * If this is empty, all particles in the System are used.  Otherwise, the
+     * exported JAX functions receive positions only for these particles, in
+     * this order, and must return forces with the same shape and order.
+     */
+    void setParticles(const std::vector<int>& particles);
+    const std::vector<int>& getParticles() const;
 
 protected:
     OpenMM::ForceImpl* createImpl() const override;
@@ -44,9 +44,9 @@ private:
     std::string energyAndForcesMlir;
     std::string compileOptions;
     std::string pjrtPluginPath;
+    std::vector<int> particles;
 
     bool usePeriodic;
-    bool outputsForces;
 };
 
 } // namespace JaxPlugin

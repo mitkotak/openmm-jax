@@ -62,17 +62,17 @@ def get_compile_options(
 
 def export_jax_model(
     *,
-    num_system_atoms: int,
+    num_model_atoms: int,
     force_function: Callable[..., Any],
     energy_function: Callable[..., Any],
     energy_and_forces_function: Callable[..., Any],
     periodic: bool,
     input_dtype: Any = jnp.float32,
 ) -> tuple[str, str, str, str]:
-    """Export OpenMM-shaped JAX callables for native JaxForce execution."""
+    """Export selected-model-shaped JAX callables for native JaxForce execution."""
     platforms = ("cuda",)
 
-    positions_shape = jax.ShapeDtypeStruct((int(num_system_atoms), 3), input_dtype)
+    positions_shape = jax.ShapeDtypeStruct((int(num_model_atoms), 3), input_dtype)
     export_args: tuple[Any, ...]
     if periodic:
         box_vectors_shape = jax.ShapeDtypeStruct((3, 3), input_dtype)

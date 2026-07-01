@@ -15,7 +15,7 @@ namespace JaxPlugin {
 struct OpenMmPjrtInputs {
     CUdeviceptr positions = 0;
     CUdeviceptr boxVectors = 0;
-    int numParticles = 0;
+    int numInputParticles = 0;
     int deviceIndex = 0;
     CUstream stream = nullptr;
     bool usePeriodic = false;

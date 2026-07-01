@@ -4,6 +4,11 @@
 %import(module="openmm.openmm") "swig/OpenMMSwigHeaders.i"
 %include "swig/typemaps.i"
 %include <std_string.i>
+%include <std_vector.i>
+
+namespace std {
+    %template(vectori) vector<int>;
+}
 
 %{
 #include "JaxForce.h"
@@ -57,17 +62,12 @@ public:
     JaxForce(const std::string& forceMlir, const std::string& energyMlir,
              const std::string& energyAndForcesMlir,
              const std::string& compileOptionsBase64);
-    const std::string& getForceMlir() const;
-    const std::string& getEnergyMlir() const;
-    const std::string& getEnergyAndForcesMlir() const;
-    const std::string& getCompileOptions() const;
-    std::string getCompileOptionsBase64() const;
     void setUsesPeriodicBoundaryConditions(bool periodic);
     bool usesPeriodicBoundaryConditions() const;
-    void setOutputsForces(bool);
-    bool getOutputsForces() const;
     void setPjrtPluginPath(const std::string& path);
     const std::string& getPjrtPluginPath() const;
+    void setParticles(const std::vector<int>& particles);
+    const std::vector<int>& getParticles() const;
 
     %extend {
         int addToSystem(PyObject* system) {
@@ -87,6 +87,29 @@ public:
 }
 
 %pythoncode %{
+def _load_bundled_platform_plugins():
+    import platform as _platform
+    from pathlib import Path as _Path
+
+    import openmm as _openmm
+
+    module_dir = _Path(__file__).resolve().parent
+    system = _platform.system()
+    if system == "Windows":
+        names = ("OpenMMJaxCUDA.dll",)
+    elif system == "Darwin":
+        names = ("libOpenMMJaxCUDA.dylib",)
+    else:
+        names = ("libOpenMMJaxCUDA.so",)
+    for name in names:
+        path = module_dir / name
+        if path.is_file():
+            _openmm.Platform.loadPluginLibrary(str(path))
+
+
+_load_bundled_platform_plugins()
+
+
 def _disown_after_add_to_system(cls):
     original = cls.addToSystem
 

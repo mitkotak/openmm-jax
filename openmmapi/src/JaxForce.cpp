@@ -2,7 +2,9 @@
 #include "internal/JaxForceImpl.h"
 #include "internal/JaxBase64.h"
 #include "openmm/OpenMMException.h"
+#include <set>
 #include <string>
+#include <vector>
 
 using namespace JaxPlugin;
 using namespace OpenMM;
@@ -27,7 +29,7 @@ JaxForce::JaxForce(const string& forceMlir, const string& energyMlir,
         forceMlir(forceMlir), energyMlir(energyMlir),
         energyAndForcesMlir(energyAndForcesMlir),
         compileOptions(decodeCompileOptionsBase64(compileOptionsBase64)),
-        usePeriodic(false), outputsForces(false) {
+        usePeriodic(false) {
 }
 
 const string& JaxForce::getForceMlir() const {
@@ -63,18 +65,25 @@ bool JaxForce::usesPeriodicBoundaryConditions() const {
     return usePeriodic;
 }
 
-void JaxForce::setOutputsForces(bool outputsForces) {
-    this->outputsForces = outputsForces;
-}
-
-bool JaxForce::getOutputsForces() const {
-    return outputsForces;
-}
-
 void JaxForce::setPjrtPluginPath(const string& path) {
     pjrtPluginPath = path;
 }
 
 const string& JaxForce::getPjrtPluginPath() const {
     return pjrtPluginPath;
+}
+
+void JaxForce::setParticles(const vector<int>& particles) {
+    set<int> seen;
+    for (int particle : particles) {
+        if (particle < 0)
+            throw OpenMMException("JaxForce: particle indices must be non-negative");
+        if (!seen.insert(particle).second)
+            throw OpenMMException("JaxForce: particle indices must be unique");
+    }
+    this->particles = particles;
+}
+
+const vector<int>& JaxForce::getParticles() const {
+    return particles;
 }

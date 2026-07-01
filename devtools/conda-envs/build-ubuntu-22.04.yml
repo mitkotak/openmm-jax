@@ -1,0 +1,23 @@
+name: build
+channels:
+  - conda-forge
+dependencies:
+  - cmake>=3.22
+  - cuda-version=12.9
+  - cuda-cudart-dev
+  - cuda-driver-dev
+  - cuda-crt=12.9.86
+  - gxx_linux-64
+  - make
+  - openmm=8.5.2
+  - pip
+  - python=3.11
+  - setuptools
+  - swig=4.3.1
+  - wheel
+  - pip:
+      - jax==0.10.1
+      - jaxlib==0.10.1
+      - jax-cuda12-plugin==0.10.1
+      - jax-cuda12-pjrt==0.10.1
+      - numpy

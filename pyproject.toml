@@ -1,22 +1,9 @@
-[build-system]
-requires = ["setuptools>=42", "wheel"]
-build-backend = "setuptools.build_meta"
-
 [tool.ruff]
 line-length = 99
 target-version = "py311"
 extend-exclude = [
     "build",
-    "phenol_rdf_*",
-    "python/openmmjax.py",
 ]
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
-
-[tool.ruff.lint.per-file-ignores]
-"test/*.py" = ["E501"]
-
-[tool.pytest.ini_options]
-pythonpath = ["."]
-python_files = ["Test*.py"]
