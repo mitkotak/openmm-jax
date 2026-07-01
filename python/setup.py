@@ -113,7 +113,7 @@ setup(
     ext_modules=[extension],
     cmdclass={"build_ext": BundleBuildExt},
     install_requires=[
-        "openmm>=8.5.2",
+        "openmm",
         f"jax[cuda{cuda_version}]" if cuda_version in {"12", "13"} else "jax",
         "numpy",
     ],
