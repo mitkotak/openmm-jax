@@ -77,7 +77,7 @@ cmake --build build --target PythonInstall --parallel
 
 https://github.com/openmm/openmm/issues/4594 for the idea
 
-@abhijeetgangan for discussions on API design, [openmm-torch](https://github.com/openmm/openmm-torch) and [openmm](https://github.com/openmm/openmm) for the MD API, [xla](https://github.com/openxla/xla/tree/main) for PJRT code, [https://www.youtube.com/watch?v=2GlMqaNxP_w] for intro to PJRT concepts, 
+@abhijeetgangan for discussions on API design, [openmm-torch](https://github.com/openmm/openmm-torch) and [openmm](https://github.com/openmm/openmm) for the MD API, [xla](https://github.com/openxla/xla/tree/main) for PJRT code,[PJRT tutorial](https://www.youtube.com/watch?v=2GlMqaNxP_w)
 
 Also show some love to our friends at [lammps-jax](https://github.com/abhijeetgangan/lammps-jax).
 

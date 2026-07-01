@@ -6,7 +6,7 @@ on:
       publish:
         description: "Where to publish built wheels"
         required: true
-        default: testpypi
+        default: none
         type: choice
         options:
           - testpypi
