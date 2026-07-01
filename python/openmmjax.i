@@ -88,10 +88,30 @@ public:
 
 %pythoncode %{
 def _load_bundled_platform_plugins():
+    import ctypes as _ctypes
     import platform as _platform
     from pathlib import Path as _Path
 
     import openmm as _openmm
+
+    def _has_cuda_driver():
+        system = _platform.system()
+        if system == "Windows":
+            driver_names = ("nvcuda.dll",)
+        elif system == "Darwin":
+            driver_names = ()
+        else:
+            driver_names = ("libcuda.so.1", "libcuda.so")
+        for name in driver_names:
+            try:
+                _ctypes.CDLL(name)
+                return True
+            except OSError:
+                pass
+        return False
+
+    if not _has_cuda_driver():
+        return
 
     module_dir = _Path(__file__).resolve().parent
     system = _platform.system()
