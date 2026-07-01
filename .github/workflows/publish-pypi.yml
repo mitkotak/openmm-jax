@@ -3,11 +3,14 @@ name: Publish PyPI Wheels
 on:
   workflow_dispatch:
     inputs:
-      publish_testpypi:
-        description: "Publish built wheels to TestPyPI"
+      publish:
+        description: "Where to publish built wheels"
         required: true
-        default: false
-        type: boolean
+        default: testpypi
+        type: choice
+        options:
+          - testpypi
+          - none
   release:
     types:
       - published
@@ -35,6 +38,16 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Verify release version
+        if: github.event_name == 'release'
+        run: |
+          version="$(sed -n 's/^SET(OPENMM_JAX_VERSION \([^ )]*\).*/\1/p' CMakeLists.txt)"
+          tag="${GITHUB_REF_NAME#v}"
+          if [[ "${version}" != "${tag}" ]]; then
+            echo "CMake OPENMM_JAX_VERSION (${version}) does not match release tag (${GITHUB_REF_NAME})."
+            exit 1
+          fi
 
       - uses: conda-incubator/setup-miniconda@v4
         name: Install build environment
@@ -85,15 +98,7 @@ jobs:
           OPENMM_JAX_PACKAGE_NAME: ${{ matrix.cuda.package }}
           OPENMM_JAX_CUDA_VERSION: ${{ matrix.cuda.major }}
         run: |
-          python -m pip wheel ./build/python --no-deps -w wheelhouse
-
-      - name: Repair wheel
-        run: |
-          auditwheel repair wheelhouse/*.whl -w dist \
-            --exclude libOpenMM.so \
-            --exclude libOpenMMCUDA.so \
-            --exclude libcuda.so.1 \
-            --exclude libcuda.so
+          devtools/build-wheel.sh
 
       - name: Smoke test wheel
         run: |
@@ -130,7 +135,7 @@ jobs:
     name: Publish to TestPyPI
     needs: build-wheels
     runs-on: ubuntu-22.04
-    if: github.event_name == 'workflow_dispatch' && inputs.publish_testpypi
+    if: github.event_name == 'workflow_dispatch' && inputs.publish == 'testpypi'
     permissions:
       contents: read
     steps:
