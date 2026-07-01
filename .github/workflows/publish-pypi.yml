@@ -2,6 +2,12 @@ name: Publish PyPI Wheels
 
 on:
   workflow_dispatch:
+    inputs:
+      publish_testpypi:
+        description: "Publish built wheels to TestPyPI"
+        required: true
+        default: false
+        type: boolean
   release:
     types:
       - published
@@ -119,3 +125,23 @@ jobs:
         env:
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
         run: uv publish dist/*.whl
+
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: build-wheels
+    runs-on: ubuntu-22.04
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_testpypi
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Publish to TestPyPI
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.TEST_PYPI_TOKEN }}
+        run: uv publish --publish-url https://test.pypi.org/legacy/ dist/*.whl
