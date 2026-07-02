@@ -55,20 +55,22 @@ void CudaCalcJaxForceKernel::initialize(const System& system, const JaxForce& fo
         throw OpenMMException("JaxForce: at least one particle must be selected");
     usePeriodic = force.usesPeriodicBoundaryConditions();
 
-    ContextSelector selector(cu);
-    map<string, string> defines;
-    CUmodule program = cu.createModule(CudaJaxKernelSources::jaxForce, defines);
-    copyInputsAllKernel = cu.getKernel(program, "copyInputsAll");
-    copyInputsSubsetKernel = cu.getKernel(program, "copyInputsSubset");
-    addForcesAllKernel = cu.getKernel(program, "addForcesAll");
-    addForcesSubsetKernel = cu.getKernel(program, "addForcesSubset");
-    int elementSize = (cu.getUseDoublePrecision() ? sizeof(double) : sizeof(float));
-    packedPositions.initialize(cu, 3*numJaxParticles, elementSize, "jaxPackedPositions");
-    boxVectors.initialize(cu, 9, elementSize, "jaxBoxVectors");
-    if (useParticleSubset) {
-        selectedParticles.initialize(cu, numJaxParticles, sizeof(int), "jaxSelectedParticles");
-        uploadSelectedParticles();
-        cu.addReorderListener(new ReorderListener(*this));
+    {
+        ContextSelector selector(cu);
+        map<string, string> defines;
+        CUmodule program = cu.createModule(CudaJaxKernelSources::jaxForce, defines);
+        copyInputsAllKernel = cu.getKernel(program, "copyInputsAll");
+        copyInputsSubsetKernel = cu.getKernel(program, "copyInputsSubset");
+        addForcesAllKernel = cu.getKernel(program, "addForcesAll");
+        addForcesSubsetKernel = cu.getKernel(program, "addForcesSubset");
+        int elementSize = (cu.getUseDoublePrecision() ? sizeof(double) : sizeof(float));
+        packedPositions.initialize(cu, 3*numJaxParticles, elementSize, "jaxPackedPositions");
+        boxVectors.initialize(cu, 9, elementSize, "jaxBoxVectors");
+        if (useParticleSubset) {
+            selectedParticles.initialize(cu, numJaxParticles, sizeof(int), "jaxSelectedParticles");
+            uploadSelectedParticles();
+            cu.addReorderListener(new ReorderListener(*this));
+        }
     }
 
     ScopedPrimaryContext pjrtContext(cu, primaryContext.get());
@@ -203,11 +205,15 @@ void CudaCalcJaxForceKernel::addForces(CUdeviceptr forcePointer) {
 }
 
 double CudaCalcJaxForceKernel::execute(ContextImpl& context, bool includeForces, bool includeEnergy) {
-    ContextSelector selector(cu);
     if (!includeForces && !includeEnergy)
         return 0.0;
-    CUstream openmmStream = cu.getCurrentStream();
-    RecordedCudaEvent inputReadyEvent = prepareJaxInputs(openmmStream);
+    CUstream openmmStream;
+    RecordedCudaEvent inputReadyEvent;
+    {
+        ContextSelector selector(cu);
+        openmmStream = cu.getCurrentStream();
+        inputReadyEvent = prepareJaxInputs(openmmStream);
+    }
     OpenMmPjrtInputs inputs;
     inputs.positions = packedPositions.getDevicePointer();
     inputs.boxVectors = boxVectors.getDevicePointer();
@@ -222,6 +228,7 @@ double CudaCalcJaxForceKernel::execute(ContextImpl& context, bool includeForces,
     pjrtContext.pop();
 
     if (includeForces) {
+        ContextSelector selector(cu);
         result.forceOutput.consumeOnStream(openmmStream,
                 [this](CUdeviceptr fp) { addForces(fp); });
     }

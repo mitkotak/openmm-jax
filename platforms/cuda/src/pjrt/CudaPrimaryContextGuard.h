@@ -108,7 +108,6 @@ private:
             return;
         }
         active = false;
-        cu.setAsCurrent();
     }
 
     void check(CUresult result, const std::string& prefix) {

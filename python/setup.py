@@ -19,12 +19,11 @@ readme = Path(__file__).with_name("README.md")
 if cuda_version not in {None, "", "12", "13"}:
     raise RuntimeError("OPENMM_JAX_CUDA_VERSION must be unset, '12', or '13'")
 
+openmm_cuda_requires = [f"openmm-cuda-{cuda_version}"] if cuda_version in {"12", "13"} else []
+
 extra_compile_args = ["-std=c++17"]
 extra_link_args = []
-runtime_library_dirs = [
-    os.path.join(openmm_dir, "lib"),
-    jax_plugin_library_dir,
-]
+runtime_library_dirs = []
 
 if platform.system() == "Windows":
     extra_compile_args = ["/std:c++17"]
@@ -34,7 +33,11 @@ elif platform.system() == "Darwin":
     extra_link_args += ["-stdlib=libc++", "-mmacosx-version-min=10.13"]
 elif platform.system() == "Linux":
     extra_link_args += ["-Wl,--enable-new-dtags", "-Wl,-rpath,$ORIGIN"]
-    runtime_library_dirs += ["$ORIGIN"]
+    runtime_library_dirs += [
+        "$ORIGIN",
+        "$ORIGIN/OpenMM.libs/lib",
+        "$ORIGIN/OpenMM.libs/lib/plugins",
+    ]
 
 extension = Extension(
     name="_openmmjax",
@@ -114,6 +117,7 @@ setup(
     cmdclass={"build_ext": BundleBuildExt},
     install_requires=[
         "openmm",
+        *openmm_cuda_requires,
         f"jax[cuda{cuda_version}]" if cuda_version in {"12", "13"} else "jax",
         "numpy",
     ],
