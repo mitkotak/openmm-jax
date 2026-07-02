@@ -37,6 +37,8 @@ elif platform.system() == "Linux":
         "$ORIGIN",
         "$ORIGIN/OpenMM.libs/lib",
         "$ORIGIN/OpenMM.libs/lib/plugins",
+        "$ORIGIN/../../..",
+        "$ORIGIN/../../../plugins",
     ]
 
 extension = Extension(
