@@ -75,22 +75,22 @@ IF(CUDAToolkit_FOUND)
     IF(NOT CUDA_INCLUDE_DIRS AND CUDAToolkit_TARGET_DIR)
         SET(CUDA_INCLUDE_DIRS "${CUDAToolkit_TARGET_DIR}/include")
     ENDIF()
-    IF(EXISTS "${OPENMM_DIR}/targets/${CMAKE_SYSTEM_PROCESSOR}-linux/include/cuda.h")
-        LIST(APPEND CUDA_INCLUDE_DIRS
-            "${OPENMM_DIR}/targets/${CMAKE_SYSTEM_PROCESSOR}-linux/include")
-    ENDIF()
-    IF(NOT CUDA_INCLUDE_DIRS)
-        FIND_PATH(CUDA_INCLUDE_DIRS cuda.h
-            PATHS
-                "${OPENMM_DIR}/targets/${CMAKE_SYSTEM_PROCESSOR}-linux/include"
-                "${OPENMM_DIR}/include"
-            NO_DEFAULT_PATH)
-    ENDIF()
     IF(TARGET CUDA::cuda_driver)
         SET(CUDA_CUDA_LIBRARY CUDA::cuda_driver)
     ENDIF()
 ENDIF()
-IF(CUDAToolkit_FOUND AND NOT CUDA_CUDA_LIBRARY)
+IF(EXISTS "${OPENMM_DIR}/targets/${CMAKE_SYSTEM_PROCESSOR}-linux/include/cuda.h")
+    LIST(APPEND CUDA_INCLUDE_DIRS
+        "${OPENMM_DIR}/targets/${CMAKE_SYSTEM_PROCESSOR}-linux/include")
+ENDIF()
+IF(NOT CUDA_INCLUDE_DIRS)
+    FIND_PATH(CUDA_INCLUDE_DIRS cuda.h
+        PATHS
+            "${OPENMM_DIR}/targets/${CMAKE_SYSTEM_PROCESSOR}-linux/include"
+            "${OPENMM_DIR}/include"
+        NO_DEFAULT_PATH)
+ENDIF()
+IF(NOT CUDA_CUDA_LIBRARY)
     FIND_LIBRARY(CUDA_CUDA_LIBRARY
         NAMES cuda
         PATHS
@@ -101,11 +101,11 @@ IF(CUDAToolkit_FOUND AND NOT CUDA_CUDA_LIBRARY)
 ENDIF()
 SET(JAX_BUILD_CUDA_LIB ON CACHE BOOL "Build the CUDA platform plugin")
 IF(JAX_BUILD_CUDA_LIB)
-    IF(CUDAToolkit_FOUND AND CUDA_CUDA_LIBRARY)
+    IF(CUDA_INCLUDE_DIRS AND CUDA_CUDA_LIBRARY)
         MESSAGE(STATUS "Building CUDA platform plugin")
         ADD_SUBDIRECTORY(platforms/cuda)
     ELSE()
-        MESSAGE(WARNING "CUDA toolkit or driver library not found; not building CUDA platform plugin")
+        MESSAGE(WARNING "CUDA headers or driver library not found; not building CUDA platform plugin")
     ENDIF()
 ENDIF()
 

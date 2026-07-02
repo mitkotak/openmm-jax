@@ -76,7 +76,6 @@ jobs:
             cuda-cudart-dev \
             cuda-driver-dev \
             cuda-crt \
-            cuda-nvcc \
             openmm=8.5.2 \
             numpy
 
