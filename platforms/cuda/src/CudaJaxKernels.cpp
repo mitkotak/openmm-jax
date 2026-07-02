@@ -42,7 +42,7 @@ CudaCalcJaxForceKernel::~CudaCalcJaxForceKernel() {
     try {
         ScopedPrimaryContext pjrtContext(cu, primaryContext.get());
         pjrtRuntime.close();
-        pjrtContext.pop();
+        pjrtContext.restore();
     } catch (...) {}
 }
 
@@ -77,7 +77,7 @@ void CudaCalcJaxForceKernel::initialize(const System& system, const JaxForce& fo
     pjrtRuntime.initialize(force.getPjrtPluginPath(), force.getForceMlir(),
             force.getEnergyMlir(), force.getEnergyAndForcesMlir(),
             force.getCompileOptions());
-    pjrtContext.pop();
+    pjrtContext.restore();
 }
 
 vector<int> CudaCalcJaxForceKernel::validateAndCopyParticles(const System& system,
@@ -225,7 +225,7 @@ double CudaCalcJaxForceKernel::execute(ContextImpl& context, bool includeForces,
     inputs.useDoublePrecisionReal = cu.getUseDoublePrecision();
     ScopedPrimaryContext pjrtContext(cu, primaryContext.get());
     OpenMmPjrtExecutionResult result = pjrtRuntime.execute(inputs, includeForces, includeEnergy);
-    pjrtContext.pop();
+    pjrtContext.restore();
 
     if (includeForces) {
         ContextSelector selector(cu);

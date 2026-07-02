@@ -84,7 +84,6 @@ void OpenMmPjrtOutputLifetime::consumeForceOutput(PjrtBufferPtr forceBuffer,
     try {
         consumer(forcePointer);
         deferForceOutputDestroyUntilOpenMMUseCompletes(forceBuffer, openmmStream);
-        destroyForceOutputsPendingOpenMMUse(false);
     }
     catch (...) {
         if (forceBuffer != nullptr) {
@@ -94,8 +93,16 @@ void OpenMmPjrtOutputLifetime::consumeForceOutput(PjrtBufferPtr forceBuffer,
                 // reading from it and stream completion could not be proven.
                 forceBuffer.release();
             }
+            else {
+                // Defer PJRT destruction until outside ContextSelector(cu).
+                try {
+                    deferForceOutputDestroyUntilOpenMMUseCompletes(forceBuffer, openmmStream);
+                }
+                catch (...) {
+                    forceBuffer.release();
+                }
+            }
         }
-        destroyForceOutputsPendingOpenMMUse(false);
         throw;
     }
 }

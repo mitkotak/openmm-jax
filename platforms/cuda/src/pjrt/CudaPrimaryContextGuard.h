@@ -50,15 +50,17 @@ private:
 };
 
 /**
- * RAII guard that pushes the CUDA primary context for PJRT operations and
- * restores the OpenMM context on destruction or explicit pop().
+ * RAII guard that makes the CUDA primary context current for PJRT operations.
  */
 class ScopedPrimaryContext {
 public:
     ScopedPrimaryContext(OpenMM::CudaContext& cu, CUcontext context)
-            : cu(cu), expectedContext(context), active(true) {
-        check(cuCtxPushCurrent(expectedContext),
-                "Failed to push the CUDA primary context for PJRT");
+            : cu(cu), expectedContext(context), previousContext(nullptr),
+              active(true) {
+        check(cuCtxGetCurrent(&previousContext),
+                "Failed to get the current CUDA context before PJRT");
+        check(cuCtxSetCurrent(expectedContext),
+                "Failed to set the CUDA primary context for PJRT");
     }
 
     ScopedPrimaryContext(const ScopedPrimaryContext&) = delete;
@@ -73,8 +75,7 @@ public:
         }
     }
 
-    /** Explicitly pop the primary context and restore OpenMM's context. */
-    void pop() {
+    void restore() {
         restore(true);
     }
 
@@ -87,24 +88,16 @@ private:
                 check(result, "Failed to get the current CUDA context after PJRT");
             return;
         }
-        if (current == expectedContext) {
-            CUcontext popped;
-            result = cuCtxPopCurrent(&popped);
-            if (result != CUDA_SUCCESS) {
-                if (throwOnError)
-                    check(result, "Failed to pop the CUDA primary context after PJRT");
-                return;
-            }
-            if (popped != expectedContext) {
-                if (throwOnError)
-                    throw OpenMM::OpenMMException(
-                            "JaxForce CUDA backend popped an unexpected CUDA context");
-                return;
-            }
-        } else if (current != cu.getContext()) {
+        if (current != expectedContext) {
             if (throwOnError)
                 throw OpenMM::OpenMMException(
                         "JaxForce CUDA backend found an unexpected CUDA context after PJRT");
+            return;
+        }
+        result = cuCtxSetCurrent(previousContext);
+        if (result != CUDA_SUCCESS) {
+            if (throwOnError)
+                check(result, "Failed to restore the CUDA context after PJRT");
             return;
         }
         active = false;
@@ -121,6 +114,7 @@ private:
 
     OpenMM::CudaContext& cu;
     CUcontext expectedContext;
+    CUcontext previousContext;
     bool active;
 };
 
