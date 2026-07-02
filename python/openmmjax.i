@@ -24,32 +24,6 @@ namespace std {
 #include "openmm/RPMDIntegrator.h"
 #include "openmm/RPMDMonteCarloBarostat.h"
 #include <stdexcept>
-
-static void* unwrapOpenMMSwigPointer(PyObject* object, const char* typeName) {
-    PyObject* thisObject = PyObject_GetAttrString(object, "this");
-    if (thisObject == NULL)
-        throw std::runtime_error(std::string("Expected an OpenMM Python object for ") + typeName);
-    SwigPyObject* swigObject = SWIG_Python_GetSwigThis(thisObject);
-    void* pointer = (swigObject == NULL ? NULL : swigObject->ptr);
-    if (pointer == NULL) {
-        PyObject* pointerInt = PyNumber_Long(thisObject);
-        if (pointerInt != NULL) {
-            pointer = PyLong_AsVoidPtr(pointerInt);
-            Py_DECREF(pointerInt);
-        }
-        PyErr_Clear();
-    }
-    Py_DECREF(thisObject);
-    if (pointer == NULL)
-        throw std::runtime_error(std::string("Could not unwrap OpenMM Python object for ") + typeName);
-    return pointer;
-}
-
-static int addForceToOpenMMSystem(OpenMM::Force* force, PyObject* system) {
-    OpenMM::System* systemPointer = reinterpret_cast<OpenMM::System*>(
-            unwrapOpenMMSwigPointer(system, "OpenMM::System"));
-    return systemPointer->addForce(force);
-}
 %}
 
 %exception {
@@ -76,10 +50,6 @@ public:
     const std::vector<int>& getParticles() const;
 
     %extend {
-        int addToSystem(PyObject* system) {
-            return addForceToOpenMMSystem(self, system);
-        }
-
         static JaxPlugin::JaxForce& cast(OpenMM::Force& force) {
             return dynamic_cast<JaxPlugin::JaxForce&>(force);
         }
@@ -134,17 +104,4 @@ def _load_bundled_platform_plugins():
 
 
 _load_bundled_platform_plugins()
-
-
-def _disown_after_add_to_system(cls):
-    original = cls.addToSystem
-
-    def add_to_system(self, system):
-        index = original(self, system)
-        self.thisown = False
-        return index
-
-    cls.addToSystem = add_to_system
-
-_disown_after_add_to_system(JaxForce)
 %}
