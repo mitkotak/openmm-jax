@@ -3,11 +3,11 @@
 %pythonbegin %{
 # Load OpenMM first so its package-specific library paths are available before
 # the OpenMM-JAX extension resolves libOpenMM.so.
-import openmm.openmm as _openmm_openmm
+import openmm as _openmm
 %}
 
 %include "factory.i"
-%import(module="openmm.openmm") "swig/OpenMMSwigHeaders.i"
+%import(module="openmm") "swig/OpenMMSwigHeaders.i"
 %include "swig/typemaps.i"
 %include <std_string.i>
 %include <std_vector.i>

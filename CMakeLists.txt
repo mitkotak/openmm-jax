@@ -1,4 +1,4 @@
-SET(OPENMM_JAX_VERSION 0.1.3 CACHE STRING "The version of OpenMM-JAX that will be built." FORCE)
+SET(OPENMM_JAX_VERSION 0.1.3.1 CACHE STRING "The version of OpenMM-JAX that will be built." FORCE)
 
 CMAKE_MINIMUM_REQUIRED(VERSION 3.17)
 PROJECT(OpenMMJax)
