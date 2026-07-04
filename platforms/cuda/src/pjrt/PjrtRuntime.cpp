@@ -90,6 +90,55 @@ void OpenMmPjrtForceOutput::consumeOnStream(CUstream openmmStream,
     pointer = 0;
 }
 
+OpenMmPjrtEnergyOutput::OpenMmPjrtEnergyOutput(PjrtBufferPtr buffer,
+        CUdeviceptr pointer, PJRT_Buffer_Type type) :
+        buffer(std::move(buffer)), pointer(pointer), type(type) {
+}
+
+double OpenMmPjrtEnergyOutput::copyScalarToHostDouble(CUstream stream) {
+    if (buffer == nullptr || pointer == 0)
+        throw runtime_error("JaxForce PJRT: energy output is not available");
+
+    double energyDouble = 0.0;
+    float energyFloat = 0.0f;
+    void* energyHost;
+    size_t energySize;
+    if (type == PJRT_Buffer_Type_F64) {
+        energyHost = static_cast<void*>(&energyDouble);
+        energySize = sizeof(double);
+    }
+    else if (type == PJRT_Buffer_Type_F32) {
+        energyHost = static_cast<void*>(&energyFloat);
+        energySize = sizeof(float);
+    }
+    else {
+        throw runtime_error("JaxForce PJRT: energy output must be f32 or f64");
+    }
+
+    CUresult copyResult = cuMemcpyDtoHAsync(energyHost, pointer, energySize, stream);
+    if (copyResult != CUDA_SUCCESS)
+        throw runtime_error("JaxForce PJRT: failed to copy energy scalar from device");
+    CUresult syncResult = cuStreamSynchronize(stream);
+    if (syncResult != CUDA_SUCCESS)
+        throw runtime_error("JaxForce PJRT: failed to synchronize energy scalar copy");
+
+    double energy = (type == PJRT_Buffer_Type_F64) ?
+            energyDouble : static_cast<double>(energyFloat);
+    return energy;
+}
+
+void OpenMmPjrtEnergyOutput::destroy() {
+    buffer.reset();
+    pointer = 0;
+    type = PJRT_Buffer_Type_INVALID;
+}
+
+void OpenMmPjrtEnergyOutput::release() noexcept {
+    buffer.release();
+    pointer = 0;
+    type = PJRT_Buffer_Type_INVALID;
+}
+
 
 void PjrtRuntime::close() {
     outputLifetime.reset();
@@ -156,7 +205,7 @@ OpenMmPjrtExecutionResult PjrtRuntime::execute(
             program, inputBuffers, pjrtInputs.deviceIndex);
     awaitDeviceCompleteEvent(session, outputBuffers.completeEvent, program.label);
 
-    return consumeOutputs(std::move(outputBuffers), program, pjrtInputs);
+    return consumeOutputs(std::move(outputBuffers), program);
 }
 
 SelectedPjrtProgram PjrtRuntime::selectProgram(RequestedOutputs outputs) const {
@@ -212,8 +261,7 @@ PjrtInputBuffers PjrtRuntime::createInputViews(const OpenMmPjrtInputs& inputs,
 }
 
 OpenMmPjrtExecutionResult PjrtRuntime::consumeOutputs(PjrtOutputBuffers outputs,
-        const SelectedPjrtProgram& program,
-        const OpenMmPjrtInputs& inputs) {
+        const SelectedPjrtProgram& program) {
     OpenMmPjrtExecutionResult result;
 
     if (program.energyOutputIndex >= 0) {
@@ -223,21 +271,10 @@ OpenMmPjrtExecutionResult PjrtRuntime::consumeOutputs(PjrtOutputBuffers outputs,
                     string(program.label));
         CUdeviceptr energyPointer = getOpaqueDeviceMemoryDataPointer(session,
                 outputs.buffers[index], string(program.label) + " energy");
-        double energyDouble = 0.0;
-        float energyFloat = 0.0f;
-        void* energyHost = inputs.useDoublePrecisionReal ?
-                static_cast<void*>(&energyDouble) : static_cast<void*>(&energyFloat);
-        size_t energySize = inputs.useDoublePrecisionReal ? sizeof(double) : sizeof(float);
-        CUresult copyResult = cuMemcpyDtoHAsync(
-                energyHost, energyPointer, energySize, inputs.stream);
-        if (copyResult != CUDA_SUCCESS)
-            throw runtime_error("JaxForce PJRT: failed to copy energy scalar from device");
-        CUresult syncResult = cuStreamSynchronize(inputs.stream);
-        if (syncResult != CUDA_SUCCESS)
-            throw runtime_error("JaxForce PJRT: failed to synchronize energy scalar copy");
-        result.energy = inputs.useDoublePrecisionReal ?
-                energyDouble : static_cast<double>(energyFloat);
-        outputs.buffers[index].reset();
+        PJRT_Buffer_Type energyType = getBufferElementType(session,
+                outputs.buffers[index], string(program.label) + " energy");
+        result.energyOutput = OpenMmPjrtEnergyOutput(std::move(outputs.buffers[index]),
+                energyPointer, energyType);
     }
 
     if (program.forceOutputIndex >= 0) {

@@ -73,7 +73,10 @@ void PjrtPluginLibrary::open(const string& path) {
         validateApiHeader(api);
         requireApiField(api, PJRT_STRUCT_SIZE(PJRT_Api, PJRT_Client_Devices),
                 "PJRT_Client_Devices");
-        if (api->PJRT_Client_Create == nullptr || api->PJRT_Client_Devices == nullptr)
+        requireApiField(api, PJRT_STRUCT_SIZE(PJRT_Api, PJRT_Buffer_ElementType),
+                "PJRT_Buffer_ElementType");
+        if (api->PJRT_Client_Create == nullptr || api->PJRT_Client_Devices == nullptr ||
+                api->PJRT_Buffer_ElementType == nullptr)
             throw runtime_error("JaxForce PJRT: plugin API is missing required client entry points");
         if (api->PJRT_Plugin_Initialize != nullptr) {
             PJRT_Plugin_Initialize_Args initArgs;

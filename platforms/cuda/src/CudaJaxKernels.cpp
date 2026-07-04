@@ -227,11 +227,38 @@ double CudaCalcJaxForceKernel::execute(ContextImpl& context, bool includeForces,
     OpenMmPjrtExecutionResult result = pjrtRuntime.execute(inputs, includeForces, includeEnergy);
     pjrtContext.restore();
 
-    if (includeForces) {
-        ContextSelector selector(cu);
-        result.forceOutput.consumeOnStream(openmmStream,
-                [this](CUdeviceptr fp) { addForces(fp); });
+    double energy = 0.0;
+    auto destroyEnergyOutputInPjrtContext = [&]() {
+        if (includeEnergy) {
+            ScopedPrimaryContext energyPjrtContext(cu, primaryContext.get());
+            result.energyOutput.destroy();
+            energyPjrtContext.restore();
+        }
+    };
+    try {
+        if (includeEnergy || includeForces) {
+            ContextSelector selector(cu);
+            if (includeEnergy) {
+                energy = result.energyOutput.copyScalarToHostDouble(openmmStream);
+                destroyEnergyOutputInPjrtContext();
+            }
+            if (includeForces) {
+                result.forceOutput.consumeOnStream(openmmStream,
+                        [this](CUdeviceptr fp) { addForces(fp); });
+            }
+        }
+    }
+    catch (...) {
+        if (includeEnergy) {
+            try {
+                destroyEnergyOutputInPjrtContext();
+            }
+            catch (...) {
+                result.energyOutput.release();
+            }
+        }
+        throw;
     }
 
-    return result.energy;
+    return energy;
 }

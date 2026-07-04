@@ -45,8 +45,31 @@ private:
     CUdeviceptr pointer = 0;
 };
 
+class OpenMmPjrtEnergyOutput {
+public:
+    OpenMmPjrtEnergyOutput() = default;
+    OpenMmPjrtEnergyOutput(const OpenMmPjrtEnergyOutput&) = delete;
+    OpenMmPjrtEnergyOutput& operator=(const OpenMmPjrtEnergyOutput&) = delete;
+    OpenMmPjrtEnergyOutput(OpenMmPjrtEnergyOutput&&) noexcept = default;
+    OpenMmPjrtEnergyOutput& operator=(OpenMmPjrtEnergyOutput&&) noexcept = default;
+
+    double copyScalarToHostDouble(CUstream stream);
+    void destroy();
+    void release() noexcept;
+
+private:
+    friend class PjrtRuntime;
+
+    OpenMmPjrtEnergyOutput(PjrtBufferPtr buffer, CUdeviceptr pointer,
+            PJRT_Buffer_Type type);
+
+    PjrtBufferPtr buffer;
+    CUdeviceptr pointer = 0;
+    PJRT_Buffer_Type type = PJRT_Buffer_Type_INVALID;
+};
+
 struct OpenMmPjrtExecutionResult {
-    double energy = 0.0;
+    OpenMmPjrtEnergyOutput energyOutput;
     OpenMmPjrtForceOutput forceOutput;
 };
 
@@ -69,8 +92,7 @@ private:
     PjrtInputBuffers createInputViews(const OpenMmPjrtInputs& inputs,
             const SelectedPjrtProgram& program);
     OpenMmPjrtExecutionResult consumeOutputs(PjrtOutputBuffers outputs,
-            const SelectedPjrtProgram& program,
-            const OpenMmPjrtInputs& inputs);
+            const SelectedPjrtProgram& program);
 
     PjrtClientSession session;
     PjrtLoadedExecutablePtr forceExecutable;

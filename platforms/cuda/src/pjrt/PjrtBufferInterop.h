@@ -16,6 +16,9 @@ PjrtBufferPtr createViewOfDeviceBuffer(PjrtClientSession& session,
 CUdeviceptr getOpaqueDeviceMemoryDataPointer(PjrtClientSession& session,
         PjrtBufferPtr& buffer, const std::string& label);
 
+PJRT_Buffer_Type getBufferElementType(PjrtClientSession& session,
+        PjrtBufferPtr& buffer, const std::string& label);
+
 } // namespace JaxPlugin
 
 #endif

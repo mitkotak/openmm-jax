@@ -76,3 +76,17 @@ CUdeviceptr JaxPlugin::getOpaqueDeviceMemoryDataPointer(PjrtClientSession& sessi
 
     return reinterpret_cast<CUdeviceptr>(pointerArgs.device_memory_ptr);
 }
+
+PJRT_Buffer_Type JaxPlugin::getBufferElementType(PjrtClientSession& session,
+        PjrtBufferPtr& buffer, const string& label) {
+    PJRT_Buffer_ElementType_Args typeArgs;
+    typeArgs.struct_size = PJRT_Buffer_ElementType_Args_STRUCT_SIZE;
+    typeArgs.extension_start = nullptr;
+    typeArgs.buffer = buffer.get();
+    typeArgs.type = PJRT_Buffer_Type_INVALID;
+
+    session.pluginLibrary().checkError(
+            session.api()->PJRT_Buffer_ElementType(&typeArgs),
+            "PJRT_Buffer_ElementType(" + label + ")");
+    return typeArgs.type;
+}
