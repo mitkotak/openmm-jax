@@ -1,6 +1,6 @@
 # OpenMM-JAX
 
-[OpenMM](http://openmm.org) plugin for running JAX force fields through `JaxForce`. For pre-trained machine learning force field models, see [bio-mlff](https://github.com/mitkotak/bio-mlff.git).
+[OpenMM](https://openmm.org/ecosystem) plugin for running JAX force fields through `JaxForce`. For pre-trained machine learning force field models, see [bio-mlff](https://github.com/mitkotak/bio-mlff.git).
 
 
 ```bash
