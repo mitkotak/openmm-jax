@@ -51,7 +51,7 @@ configure_pjrt_plugin(force)
 ## Building from Source
 
 ```bash
-git clone https://github.com/mitkotak/openmm-jax.git
+git clone https://github.com/atomicarchitects/openmm-jax.git
 cd openmm-jax
 micromamba create -f environment.yml
 micromamba activate openmm-jax
